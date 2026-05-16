@@ -27,6 +27,19 @@ This design takes it two steps further:
 
 This document specifies **sub-project 1** only (see Scope).
 
+### 1.1 Current state (relative to `docs/handoff.md`)
+
+`docs/handoff.md` predates a fix and is **stale on one point**: its "Current
+Blocker" section says DOM injection cannot trigger OpenCode's SolidJS submit.
+That has since been resolved. `ijInjectText()` now focuses the
+`contenteditable` prompt editor, replaces its contents via
+`document.execCommand('insertText')` (which fires the real `beforeinput` /
+`input` events SolidJS reacts to), and clicks the real submit button. This is
+verified working — spoken messages reach OpenCode's message store. The
+gate → `adapter.injectText` → `adapter.submit` path in this spec therefore
+builds on a *working* primitive, not an open blocker, and the same
+`execCommand('insertText')` mechanism underlies `pickFromList` (§6.1).
+
 ---
 
 ## 2. Scope
@@ -110,20 +123,25 @@ Voice pipeline (per utterance):
 
 ### 4.1 Placement
 
-The gate slots into the one existing decision point —
-`controller.rs::on_speech_end()`, between `reconciler.reconcile()` and the
-broadcast that today unconditionally emits `"submit"`. The `Controller` gains a
-`gate: Gate` field.
+Today `controller.rs::on_asr_result()` calls `on_speech_end()` on every ASR
+`Final` result (`controller.rs:93-96`); `on_speech_end` reconciles, resets, and
+broadcasts `"submit"` inline. The gate is an **async network call** (up to
+`gate_timeout_ms`) — it cannot run inline in that path without stalling ASR
+handling, and a multi-second call holding the state machine would drop ASR
+finals that arrive mid-call.
 
-```
-on_speech_end():
-    text = reconciler.reconcile()           # raw accumulated ASR
-    verdict = gate.classify(text)           # one DeepSeek V4 Flash call
-    match verdict:
-      Incomplete       -> keep reconciler buffer; return to listening
-      Prompt{text}     -> broadcast "submit" with repaired text; reconciler.reset()
-      Command{..}      -> broadcast "command"; reconciler.reset()
-```
+So the submit decision moves out of `on_speech_end` into a **dedicated gate
+task** (§4.5):
+
+- `on_asr_result` still appends each `Final` to the reconciler, but then sends
+  a `SegmentFinalized` signal to the gate task instead of calling
+  `on_speech_end` — and it does so **regardless of current state**, so finals
+  are never dropped.
+- The gate task owns reconcile → classify → submit/execute, the re-listen
+  loop, the in-flight/`dirty` handling, and the silence-fallback timer.
+
+The `Controller` gains a `gate: Gate` field and an mpsc sender to the gate
+task.
 
 ### 4.2 Three jobs, one call
 
@@ -150,7 +168,16 @@ The model must return *only* a JSON object:
 - `status: "prompt"` → include `text` (repaired). No `command`.
 - `status: "command"` → include `text` and `command`.
 
-Rust side: `enum Verdict { Incomplete, Prompt { text }, Command { action, target, text } }`.
+`command.target` is a search string, or `null` for actions that take no target
+(`new_session`, `cycle_variant`). Every other action (`open_file`,
+`switch_model`, `switch_project`, `switch_session`, `run_command`) requires a
+non-empty `target`. The verdict parser and the recipe dispatcher (§6) validate
+this per-action and reject a `command` whose `target` presence does not match
+its `action` (a rejected command fails open to `Prompt`, §4.8).
+
+Rust side:
+`enum Verdict { Incomplete, Prompt { text: String }, Command { action: CommandAction, target: Option<String>, text: String } }`,
+where `CommandAction` is an enum over the §6.2 actions.
 
 ### 4.4 Latency — protecting the continuance path
 
@@ -169,28 +196,65 @@ Other latency tactics:
 - Compact, static system prompt (cacheable on the Zen side).
 - Small `max_tokens` (~120).
 
-### 4.5 The re-listen loop
+### 4.5 Concurrency model and the re-listen loop
 
-On `Incomplete`, the reconciler buffer is **not** reset (vs. today's
-unconditional `reset()`). The next ASR final appends to the same buffer — the
-reconciler already merges consecutive `User` turns (`reconciler.rs:84`). The
-next pause re-runs `on_speech_end` on the fuller text. Repair happens once, on
-the terminal call, over the whole buffer.
+A single long-lived **gate task** owns the evaluate-and-commit logic. It
+receives `SegmentFinalized` signals over an mpsc channel from `on_asr_result`.
+ASR `Final` results always append to the reconciler buffer regardless of
+current state — finals are never dropped. The buffer is `reset()` **only** on
+commit.
 
-Two safety nets prevent an infinite gather:
+The gate task loop:
 
-- **Silence fallback** — after an `Incomplete` verdict, arm a timer
-  (`gate_silence_fallback_ms`, default 5000). If no new speech arrives, submit
-  the buffer as-is.
-- **Re-check cap** — after `gate_max_rechecks` consecutive `Incomplete`
-  verdicts (default 3), submit anyway.
+1. Wait for a `SegmentFinalized` signal (or the silence-fallback timer).
+2. Debounce ~150 ms to coalesce rapid consecutive finals.
+3. Snapshot `text = reconciler.reconcile()`; clear the `dirty` flag.
+4. `verdict = gate.classify(text)` — the async DeepSeek call. Any
+   `SegmentFinalized` arriving *during* the call appends to the buffer and sets
+   `dirty`.
+5. On return:
+   - If `dirty` is set (the user spoke more mid-call) → discard the verdict and
+     loop to step 3 with the now-larger buffer.
+   - `Incomplete` → arm/reset the silence-fallback timer; loop to step 1.
+   - `Prompt` / `Command` → commit (broadcast `"submit"` / `"command"`),
+     `reconciler.reset()`, reset the re-check counter; loop to step 1.
+
+Because finals always append and `dirty` forces re-evaluation, a verdict is
+only ever committed on text the user has actually finished — there is no window
+where mid-call speech is lost or a stale verdict is acted on.
+
+The reconciler already merges a new `User` turn into the previous one when that
+turn is still `Active` in the buffer (`reconciler.rs:84-93`); since the buffer
+is reset only on commit, consecutive finals across re-listen iterations
+accumulate into one coherent turn. Repair happens once, on the committing call,
+over the whole buffer.
+
+Two safety nets prevent an infinite gather, both owned by the gate task:
+
+- **Silence fallback** — a timer armed/reset after every `Incomplete` verdict
+  and cancelled by any `SegmentFinalized`. On expiry (`gate_silence_fallback_ms`,
+  default 5000) the task force-commits the buffer as a `Prompt` (repairing it
+  first via one final gate call, or fail-open to raw text per §4.8).
+- **Re-check cap** — a counter incremented per consecutive `Incomplete`; after
+  `gate_max_rechecks` (default 3) the task force-commits as a `Prompt`. Reset
+  on commit.
 
 ### 4.6 State machine
 
-`Idle → User → Thinking` is unchanged except that `on_speech_end` now calls the
-gate. On `Incomplete` it returns to `Idle` **without resetting the reconciler**
-— a non-empty reconciler buffer *is* the "gathering" state. A widget signal
-distinguishes "gathering / go on…" from cold idle (see §10).
+`Idle → User → Gating → Thinking → Idle`:
+
+- `Idle → User` — VAD detects speech (unchanged).
+- `User → Gating` — first `SegmentFinalized`; the gate task is evaluating
+  and/or waiting for more speech. The reconciler buffer is non-empty.
+- `Gating → Gating` — an `Incomplete` verdict; the widget shows "go on…".
+- `Gating → Thinking` — a `Prompt` / `Command` verdict is committed.
+- `Thinking → Idle` — response complete, or command executed.
+
+`Gating` is a new state; it replaces the old behaviour where `on_speech_end`
+flipped straight `Thinking → Idle` inline. The mid-response
+`Interjection` / `Correction` cue handling (`cues.rs`, active while `Thinking`)
+is unchanged. A widget signal distinguishes `Gating` ("go on…") from cold
+`Idle` (see §10).
 
 ### 4.7 Gate system prompt (sketch)
 
@@ -477,8 +541,8 @@ adapters/opencode/
   adapter.js      (optional) site-specific JS
 
 scripts/
-  contract-check.sh   Tier B entry point
-tests/ or scripts/contract-check/   Playwright suite
+  contract-check.sh         Tier B entry point
+  contract-check/           Tier B Playwright suite
 ```
 
 Widget JS moves from giant string literals in `web.rs` into real `.js`/`.html`
