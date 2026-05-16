@@ -1,0 +1,9 @@
+data/
+target/
+.env
+*.zip
+*.tar.bz2
+# TLS certs and keys
+*.crt
+*.key
+certs/

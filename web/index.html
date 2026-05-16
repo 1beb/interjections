@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>interjections</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: #0f0f0f; color: #e0e0e0;
+         display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+  .container { max-width: 600px; width: 100%; padding: 24px; }
+  h1 { font-size: 1.5rem; margin-bottom: 24px; color: #fff; letter-spacing: -0.5px; }
+  .status-bar { display: flex; gap: 12px; align-items: center; margin-bottom: 24px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #333;
+         transition: background 0.2s, box-shadow 0.2s; }
+  .dot.connected { background: #22c55e; box-shadow: 0 0 8px rgba(34,197,94,0.4); }
+  .dot.user { background: #3b82f6; box-shadow: 0 0 8px rgba(59,130,246,0.4); }
+  .dot.model { background: #f59e0b; box-shadow: 0 0 8px rgba(245,158,11,0.4); }
+  .dot.thinking { background: #8b5cf6; box-shadow: 0 0 8px rgba(139,92,246,0.4);
+                   animation: pulse 0.8s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .state-label { font-size: 0.8rem; color: #666; text-transform: uppercase;
+                 letter-spacing: 1.5px; font-weight: 600; }
+  .transcript-box { background: #1a1a1a; border-radius: 12px; padding: 20px;
+                    min-height: 120px; margin-bottom: 16px;
+                    border: 1px solid #222; position: relative; }
+  .transcript-box .label { position: absolute; top: -10px; left: 16px;
+                           background: #1a1a1a; padding: 0 8px; font-size: 0.7rem;
+                           color: #555; text-transform: uppercase; letter-spacing: 1px; }
+  .transcript { font-size: 1rem; line-height: 1.6; min-height: 60px; }
+  .transcript .partial { color: #666; }
+  .transcript .final { color: #e0e0e0; }
+  .transcript .model-text { color: #22c55e; }
+  .transcript .empty { color: #333; font-style: italic; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { padding: 10px 20px; border-radius: 8px; border: none;
+           font-size: 0.9rem; font-weight: 500; cursor: pointer;
+           transition: all 0.15s; flex: 1; min-width: 80px; }
+  button:active { transform: scale(0.97); }
+  .btn-start { background: #22c55e; color: #000; }
+  .btn-start:hover { background: #16a34a; }
+  .btn-stop { background: #ef4444; color: #fff; }
+  .btn-stop:hover { background: #dc2626; }
+  .btn-mute { background: #222; color: #888; border: 1px solid #333; }
+  .btn-mute:hover { background: #2a2a2a; color: #e0e0e0; }
+  .btn-mute.muted { background: #f59e0b10; border-color: #f59e0b40; color: #f59e0b; }
+  button:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+  .log-box { background: #0a0a0a; border-radius: 8px; padding: 12px; margin-top: 16px;
+             max-height: 150px; overflow-y: auto; font-size: 0.75rem;
+             color: #444; font-family: 'SF Mono', 'Fira Code', monospace;
+             border: 1px solid #111; }
+  .log-box div { padding: 1px 0; }
+  .log-box .error { color: #ef4444; }
+  .log-box .info { color: #3b82f6; }
+  .controls-row { display: flex; gap: 8px; align-items: center; }
+  .controls-row select { background: #1a1a1a; color: #e0e0e0; border: 1px solid #333;
+                          padding: 10px 12px; border-radius: 8px; font-size: 0.85rem; }
+  .controls-row select:focus { outline: none; border-color: #555; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>interjections</h1>
+
+  <div class="status-bar">
+    <div class="dot" id="statusDot"></div>
+    <span class="state-label" id="stateLabel">disconnected</span>
+  </div>
+
+  <div class="transcript-box">
+    <span class="label">transcript</span>
+    <div class="transcript" id="transcript">
+      <span class="empty">Connect to start speaking...</span>
+    </div>
+  </div>
+
+  <div class="transcript-box" style="min-height: 60px;">
+    <span class="label">model response</span>
+    <div class="transcript" id="modelResponse">
+      <span class="empty">Waiting...</span>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="btn-start" id="btnStart" onclick="start()">Start</button>
+    <button class="btn-stop" id="btnStop" onclick="stop()" disabled>Stop</button>
+    <button class="btn-mute" id="btnMute" onclick="toggleMute()">Mute</button>
+  </div>
+
+  <div class="log-box" id="log"></div>
+</div>
+
+<script>
+let ws = null;
+let audioContext = null;
+let scriptNode = null;
+let sourceNode = null;
+let isMuted = false;
+let mediaStream = null;
+let nextPlayTime = 0;
+const TARGET_RATE = 16000;
+const PLAYBACK_RATE = 24000;
+
+const dot = document.getElementById('statusDot');
+const stateLabel = document.getElementById('stateLabel');
+const transcript = document.getElementById('transcript');
+const modelResponse = document.getElementById('modelResponse');
+const logEl = document.getElementById('log');
+
+function log(msg, type) {
+  const d = document.createElement('div');
+  d.textContent = '> ' + new Date().toLocaleTimeString() + ' ' + msg;
+  if (type) d.classList.add(type);
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setState(state) {
+  dot.className = 'dot';
+  if (state === 'idle' || state === 'connected') dot.classList.add('connected');
+  else if (state === 'user' || state === 'listening') dot.classList.add('user');
+  else if (state === 'model' || state === 'speaking') dot.classList.add('model');
+  else if (state === 'thinking') dot.classList.add('thinking');
+  stateLabel.textContent = state || 'disconnected';
+}
+
+function setTranscript(text, type) {
+  if (type === 'model') {
+    modelResponse.innerHTML = '<span class="model-text">' + escapeHtml(text) + '</span>';
+  } else if (type === 'partial') {
+    transcript.innerHTML = '<span class="partial">' + escapeHtml(text) + '</span>';
+  } else {
+    transcript.innerHTML = '<span class="final">' + escapeHtml(text) + '</span>';
+  }
+}
+
+function playPcmChunk(i16Data, sampleRate) {
+  if (!audioContext) return;
+  const f32 = new Float32Array(i16Data.length);
+  for (let i = 0; i < i16Data.length; i++) {
+    f32[i] = i16Data[i] / 32768.0;
+  }
+  const buf = audioContext.createBuffer(1, f32.length, sampleRate);
+  buf.getChannelData(0).set(f32);
+  const src = audioContext.createBufferSource();
+  src.buffer = buf;
+  src.connect(audioContext.destination);
+  const now = audioContext.currentTime;
+  if (nextPlayTime < now) nextPlayTime = now + 0.05;
+  src.start(nextPlayTime);
+  nextPlayTime += buf.duration;
+}
+
+function downsampleAndSend(inputBuffer, inputRate) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const inputData = inputBuffer.getChannelData(0);
+  if (inputRate === TARGET_RATE) {
+    const i16 = new Int16Array(inputData.length);
+    for (let i = 0; i < inputData.length; i++) {
+      i16[i] = Math.max(-32768, Math.min(32767, Math.round(inputData[i] * 32767)));
+    }
+    ws.send(i16.buffer);
+  } else {
+    const ratio = inputRate / TARGET_RATE;
+    const outLen = Math.round(inputData.length / ratio);
+    const i16 = new Int16Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const srcIdx = Math.round(i * ratio);
+      const s = inputData[Math.min(srcIdx, inputData.length - 1)];
+      i16[i] = Math.max(-32768, Math.min(32767, Math.round(s * 32767)));
+    }
+    ws.send(i16.buffer);
+  }
+}
+
+async function start() {
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: { ideal: TARGET_RATE },
+        echoCancellation: true,
+        noiseSuppression: true,
+      }
+    });
+
+    const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') +
+      '//' + location.host + '/ws';
+    ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      log('Connected to interject server', 'info');
+      setState('connected');
+      document.getElementById('btnStart').disabled = true;
+      document.getElementById('btnStop').disabled = false;
+      nextPlayTime = 0;
+      startRecording();
+    };
+
+    ws.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        const i16 = new Int16Array(event.data);
+        playPcmChunk(i16, PLAYBACK_RATE);
+      } else {
+        try {
+          const msg = JSON.parse(event.data);
+          switch (msg.type) {
+            case 'state':
+              setState(msg.state);
+              break;
+            case 'transcript':
+              setTranscript(msg.text, 'final');
+              break;
+            case 'partial':
+              setTranscript(msg.text, 'partial');
+              break;
+            case 'model':
+              setTranscript(msg.text, 'model');
+              break;
+            case 'log':
+              log(msg.text, msg.level || '');
+              break;
+          }
+        } catch (e) {
+          log('Parse error: ' + e.message, 'error');
+        }
+      }
+    };
+
+    ws.onclose = () => {
+      log('Disconnected from server', 'error');
+      setState('disconnected');
+      document.getElementById('btnStart').disabled = false;
+      document.getElementById('btnStop').disabled = true;
+      ws = null;
+    };
+
+    ws.onerror = () => {
+      log('WebSocket error', 'error');
+    };
+  } catch (err) {
+    log('Mic error: ' + err.message, 'error');
+  }
+}
+
+function startRecording() {
+  if (!mediaStream || isMuted || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (sourceNode) return;
+
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    sourceNode = audioContext.createMediaStreamSource(mediaStream);
+    const bufSize = 4096;
+    scriptNode = audioContext.createScriptProcessor(bufSize, 1, 1);
+    scriptNode.onaudioprocess = (e) => {
+      if (isMuted) return;
+      const inputBuffer = e.inputBuffer;
+      downsampleAndSend(inputBuffer, audioContext.sampleRate);
+    };
+    sourceNode.connect(scriptNode);
+    scriptNode.connect(audioContext.destination);
+    log('Recording started (raw PCM @ ' + audioContext.sampleRate + 'Hz)');
+  } catch (e) {
+    log('Recording error: ' + e.message, 'error');
+  }
+}
+
+function stopRecording() {
+  if (scriptNode) {
+    scriptNode.disconnect();
+    scriptNode = null;
+  }
+  if (sourceNode) {
+    sourceNode.disconnect();
+    sourceNode = null;
+  }
+}
+
+function stop() {
+  stopRecording();
+  if (audioContext) {
+    audioContext.close();
+    audioContext = null;
+  }
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+  }
+  if (ws) {
+    ws.close();
+    ws = null;
+  }
+  document.getElementById('btnStart').disabled = false;
+  document.getElementById('btnStop').disabled = true;
+  setState('disconnected');
+  log('Stopped');
+}
+
+function toggleMute() {
+  isMuted = !isMuted;
+  const btn = document.getElementById('btnMute');
+  if (isMuted) {
+    btn.textContent = 'Unmute';
+    btn.classList.add('muted');
+    log('Mic muted');
+  } else {
+    btn.textContent = 'Mute';
+    btn.classList.remove('muted');
+    log('Mic unmuted');
+  }
+}
+
+function escapeHtml(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    const startBtn = document.getElementById('btnStart');
+    if (!startBtn.disabled) { start(); return; }
+    const stopBtn = document.getElementById('btnStop');
+    if (!stopBtn.disabled) { stop(); }
+  }
+});
+</script>
+</body>
+</html>
