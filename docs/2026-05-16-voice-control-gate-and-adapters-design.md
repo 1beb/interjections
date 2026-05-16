@@ -486,6 +486,8 @@ New config (`config.rs` / `Cli` / `.env`):
 | `gate_timeout_ms` | default | 4000 |
 | `gate_silence_fallback_ms` | default | 5000 |
 | `gate_max_rechecks` | default | 3 |
+| `gate_debounce_ms` | default | 150 — coalesce rapid finals before a gate call (§4.5) |
+| `recipe_poll_timeout_ms` | default | 1500 — max wait for a recipe step's element (§6.4, §8.3) |
 | `--no-gate` | CLI flag | gate disabled (immediate submit) |
 
 The Zen endpoint is OpenAI-compatible; auth is `Authorization: Bearer

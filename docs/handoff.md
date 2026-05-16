@@ -61,6 +61,13 @@ The widget floats at the bottom-right of the OpenCode page: a mic button (🎤),
 
 ## Current Blocker
 
+> **STALE (2026-05-16).** This blocker is resolved and this section is kept
+> only for history. `ijInjectText()` now uses `document.execCommand('insertText')`
+> (which fires the real `beforeinput`/`input` events SolidJS reacts to) and
+> clicks the real submit button — verified working. See
+> `docs/2026-05-16-voice-control-gate-and-adapters-design.md` §1.1 for the
+> current architecture, which supersedes this document.
+
 `ijInjectText()` in `web.rs` (embedded in the `VOICE_WIDGET` constant) can't trigger SolidJS reactivity. The function:
 
 1. Finds the input element (`textarea` or `contenteditable div`)
