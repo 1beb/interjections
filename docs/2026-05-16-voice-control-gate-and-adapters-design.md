@@ -133,41 +133,79 @@ in-flight response, and re-enters the gate — "barge-in" (section 4.9).
 
 ---
 
-## 4. The agentic gate
+## 4. The agentic listening layer
 
-### 4.1 Placement
+> **Revised 2026-05-18.** What was "one DeepSeek call doing three jobs" is now
+> three independent, individually-swappable stages. Driven by the gate-model
+> benchmarking in `eval/` (see `eval/local-setup.md`, `eval/results.csv`).
+
+### 4.1 Three stages
+
+Between ASR and submit, the accumulated utterance passes through three stages,
+each independently configurable:
+
+```
+ASR text ─► [1 turn detector: done?] ─► [2 repair: optional] ─► [3 classifier] ─► commit
+              prosodic | semantic           on | off              prompt | command
+```
+
+**Stage 1 — turn detector** (the "knowing to wait" job). Decides whether the
+user has finished or more is coming. Pluggable, selected by `IJ_TURN_DETECTOR`
+(section 9):
+
+- **`prosodic`** (default) — an audio-native turn-detection model (Smart Turn
+  v2 class: ~6M params, ~10 ms, runs locally). It consumes the raw mic audio
+  *next to VAD* and hears rising/falling intonation — the natural "more coming"
+  vs "done" signal. Free, instant, no network.
+- **`semantic`** — an LLM reads the accumulated ASR *text* and judges
+  completeness from grammar and meaning. No prosody and slower, but needs no
+  extra model hosted.
+
+Either implementation outputs the same thing: `wait` (with a `hold` strength —
+a confident preface holds longer) or `done`. This drives the re-listen loop
+(section 4.5).
+
+**Stage 2 — repair** (optional). Fixes speech-to-text garble ("get hub" →
+"GitHub", "auth dot rs" → "auth.rs"). It is the hardest sub-task — benchmarking
+showed even capable models reach only ~40–90%, small models ~0% — and it is a
+different *kind* of work from classification, so it is its own stage, not part
+of the gate. Controlled by `--repair on|off` (default **off**):
+
+- **off** — raw ASR text is submitted as-is; OpenCode (which has the
+  conversation context) and barge-in correction absorb any garble. The
+  "let the main model handle it" path.
+- **on** — a dedicated repair LLM call (its own `repair_model`) cleans the
+  text before stage 3 and submit.
+
+**Stage 3 — classifier** (LLM). Decides `prompt` vs `command`, and for commands
+extracts `{action, target}`. This is the only stage intrinsically
+interjections' to do — the main model *is* the prompt destination, so it
+cannot route on its own behalf. When unsure it returns `prompt` (the safe
+default — the main model with context resolves ambiguity better than the gate,
+confirmed by the edge / interjection eval results).
+
+The combined result the pipeline commits is still the `Verdict` of section 4.3
+(`status` from stage 3, `hold` from stage 1, repaired `text` from stage 2);
+sections 4.3–4.10 describe that combined runtime — the re-listen loop, state
+machine, barge-in, and worked examples all carry over unchanged.
+
+### 4.2 The listening task and placement
 
 Today `controller.rs::on_asr_result()` calls `on_speech_end()` on every ASR
-`Final` result (`controller.rs:93-96`); `on_speech_end` reconciles, resets, and
-broadcasts `"submit"` inline. The gate is an **async network call** (up to
-`gate_timeout_ms`) — it cannot run inline in that path without stalling ASR
-handling, and a multi-second call holding the state machine would drop ASR
-finals that arrive mid-call.
+`Final` result (`controller.rs:93-96`), reconciling and broadcasting `"submit"`
+inline. Stages 1 and 3 involve async work (a model call, possibly networked)
+that cannot run inline without stalling ASR handling.
 
-So the submit decision moves out of `on_speech_end` into a **dedicated gate
-task** (section 4.5):
+So the pipeline runs in a **dedicated listening task**:
 
-- `on_asr_result` still appends each `Final` to the reconciler, but then sends
-  a `SegmentFinalized` signal to the gate task instead of calling
-  `on_speech_end` — and it does so **regardless of current state**, so finals
-  are never dropped.
-- The gate task owns reconcile → classify → submit/execute, the re-listen
-  loop, the in-flight/`dirty` handling, and the silence-fallback timer.
+- `on_asr_result` still appends each `Final` to the reconciler, then sends a
+  `SegmentFinalized` signal to the listening task — **regardless of current
+  state**, so finals are never dropped.
+- The listening task owns the three-stage pipeline, the re-listen loop, the
+  in-flight/`dirty` handling, and the silence-fallback timer (section 4.5).
 
-The `Controller` gains a `gate: Gate` field and an mpsc sender to the gate
-task.
-
-### 4.2 Three jobs, one call
-
-A single DeepSeek V4 Flash call (no thinking) does all of:
-
-1. **Conversational completeness** — is the user *done*, or signalling that
-   more is coming? This judges the *thought*, not grammar: "I'm going to tell
-   you a story" is a complete *sentence* but an incomplete *thought* — a
-   preface. Fragments, trail-offs, and prefaces are all `incomplete` (section 4.7).
-2. **ASR repair** — fix phonetic garble ("Aether Bay Jam" → "Azerbaijan",
-   "open auth dot rs" → "auth.rs"). Repair only: never add, drop, or answer.
-3. **Classification** — prompt for the assistant vs. UI command (+ command args).
+The `Controller` gains handles to the configured stages and an mpsc sender to
+the listening task.
 
 ### 4.3 Verdict schema
 
@@ -604,24 +642,53 @@ YAGNI until Tier B proves insufficient.
 
 ## 9. Configuration
 
-New config (`config.rs` / `Cli` / `.env`):
+New config (`config.rs` / `Cli` / `.env`). The three stages (section 4.1) are
+configured independently.
+
+**Stage 1 — turn detector:**
 
 | key | source | default |
 |---|---|---|
-| `OPENCODE_ZEN_API_KEY` | env | — (required for the gate) |
-| `gate_endpoint` | default | `https://opencode.ai/zen/v1/chat/completions` |
-| `gate_model` | default | `DeepSeek-V4-Flash-EL` — verify exact API id via Zen `GET /v1/models` |
-| `gate_timeout_ms` | default | 4000 |
+| `IJ_TURN_DETECTOR` / `--turn-detector` | env / CLI | `prosodic` — or `semantic` |
+| `turn_detector_model` | default | Smart Turn v2 GGUF path (prosodic) / classifier model (semantic) |
 | `gate_silence_fallback_ms` | default | 5000 — `hold:false` fallback (section 4.5) |
 | `gate_max_rechecks` | default | 3 — `hold:false` re-check cap (section 4.5) |
 | `gate_hold_backstop_ms` | default | 120000 — `hold:true` abandoned-session backstop (section 4.5) |
-| `gate_debounce_ms` | default | 150 — coalesce rapid finals before a gate call (section 4.5) |
+| `gate_debounce_ms` | default | 150 — coalesce rapid finals (section 4.5) |
+
+**Stage 2 — repair (optional):**
+
+| key | source | default |
+|---|---|---|
+| `--repair` | CLI | `off` — or `on` |
+| `repair_endpoint` / `repair_model` | default | (used only when `--repair on`) |
+
+**Stage 3 — classifier, and shared LLM access:**
+
+| key | source | default |
+|---|---|---|
+| `classifier_endpoint` | default | local — `http://localhost:11434/v1/chat/completions` (ollama) |
+| `classifier_model` | default | `qwen3.5:4b` — free, local, ~340ms, 84% (100% on the core gate categories) |
+| `classifier_timeout_ms` | default | 4000 |
+| `OPENCODE_GO_API` / `CEREBRAS` / etc. | env | API keys — only if a remote endpoint is configured |
 | `recipe_poll_timeout_ms` | default | 1500 — max wait for a recipe step's element (section 6.4, section 8.3) |
 | `--no-gate` | CLI flag | gate disabled (immediate submit) |
 
-The Zen endpoint is OpenAI-compatible; auth is `Authorization: Bearer
-<OPENCODE_ZEN_API_KEY>`. The key is an OpenCode account API key (the user's
-"Go" plan includes DeepSeek V4 Flash).
+**Default ship config — zero per-call cost, fully local:** prosodic turn
+detector (Smart Turn, local) + `qwen3.5:4b` classifier (local ollama) + repair
+off. Remote options stay configurable for anyone trading cost for speed.
+
+**Endpoints are OpenAI-compatible.** Benchmarked alternatives and their
+per-provider no-think switch (passed in the request body):
+
+| endpoint | model | latency / acc | no-think switch |
+|---|---|---|---|
+| ollama (local) | `qwen3.5:4b` | ~340ms / 84% | `reasoning_effort: "none"` |
+| llama.cpp (local) | qwen3.5-4b GGUF | ~340ms / 85% | `chat_template_kwargs: {enable_thinking: false}` |
+| Cerebras | `gpt-oss-120b` | ~140ms / 93% | (non-thinking by default) — per-call cost |
+| OpenCode Go | `deepseek-v4-flash` | ~1.3s / 85% | `thinking: {type: "disabled"}` |
+
+Full data: `eval/results.csv`, `eval/local-setup.md`.
 
 ---
 
