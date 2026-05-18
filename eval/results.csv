@@ -2,3 +2,17 @@ date,model,label,cases,runs,n,total_min_ms,total_median_ms,total_p95_ms,total_ma
 2026-05-18,qwen3.5:4b,local qwen3.5:4b ollama,88,3,264,276,341,576,595,216,0,0.841,0.548
 2026-05-18,qwen3.5:8b,local qwen3.5:8b ollama,88,3,0,,,,,,,0.0,
 2026-05-18,hf.co/unsloth/Qwen3.5-4B-GGUF:Q3_K_M,local qwen3.5:4b Q3_K_M unsloth,88,3,0,,,,,,,0.0,
+2026-05-18,qwen3.5-4b,llamacpp-V5-Q3,88,3,132,496,1560,4888,5140,239,412,0.788,0.45
+2026-05-18,qwen3:1.7b,local qwen3:1.7b ollama small,88,3,264,104,173,340,5498,81,0,0.447,0.429
+2026-05-18,qwen3:0.6b,local qwen3:0.6b ollama small,88,3,264,111,144,224,260,76,0,0.473,0.588
+2026-05-18,qwen3.5-4b,llamacpp-V1-baseline,88,3,132,954,1704,10983,11147,227,529,0.78,0.639
+2026-05-18,qwen3.5-4b,llamacpp-V2-fa,88,3,22,953,1212,10952,11078,229,448,0.864,0.895
+2026-05-18,qwen3.5-4b,llamacpp-V3-kvq8,88,3,132,108,339,452,549,229,0,0.848,0.66
+2026-05-18,qwen3.5-4b,llamacpp-V4-tight,88,3,132,108,339,451,548,228,0,0.848,0.66
+2026-05-18,gemma3:270m,local gemma3:270m ollama,88,3,264,640,700,903,1676,631,0,0.364,0.562
+2026-05-18,gemma3:1b,local gemma3:1b ollama,88,3,264,265,287,395,1106,241,0,0.375,0.429
+2026-05-18,gemma3:4b,local gemma3:4b ollama,88,3,264,241,332,497,2407,199,0,0.648,0.48
+2026-05-18,granite4:micro,local granite4:micro ollama,88,3,264,107,176,267,10301,68,0,0.614,0.308
+2026-05-18,granite4:micro-h,local granite4:micro-h ollama,88,3,264,329,416,560,588,290,0,0.587,0.375
+2026-05-18,granite3.3:2b,local granite3.3:2b ollama,88,3,264,64,165,346,3480,40,0,0.58,0.316
+2026-05-18,granite3.3:8b,local granite3.3:8b ollama,88,3,264,131,397,795,972,58,0,0.625,0.782

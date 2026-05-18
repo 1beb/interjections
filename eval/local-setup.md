@@ -101,23 +101,32 @@ the human description of the launch flags behind each.
 Run all five in one shot: `bash eval/bench_llamacpp.sh` (launches each variant,
 benchmarks, kills the server; appends rows to `results.csv`).
 
-## Status / known issue (2026-05-18)
+## Results (2026-05-18)
 
-**llama.cpp-direct is blocked on a GGUF version skew.** The built `llama-server`
-(master) refuses the Qwen3.5 GGUFs:
+**GGUF compatibility:** older GGUFs (ollama `qwen3.5:4b`, stale Unsloth) fail
+master llama.cpp — `qwen35.rope.dimension_sections expected 4, got 3`. A fresh
+Unsloth GGUF (`unsloth/Qwen3.5-4B-MTP-GGUF`, May 2026) loads cleanly:
+`/home/b/models/qwen3.5-4b-unsloth-mtp-Q4_K_M.gguf`.
 
-```
-error loading model hyperparameters:
-key qwen35.rope.dimension_sections has wrong array length; expected 4, got 3
-```
+**No-think:** the only switch that works for Qwen3.5 here is request-body
+`chat_template_kwargs: {"enable_thinking": false}`. `--reasoning-budget 0`,
+`reasoning_effort`, and top-level `enable_thinking` do **not** disable thinking.
 
-Master's `qwen35` arch reader expects 4 rope sections; the GGUFs (ollama's
-`qwen3.5:4b` and Unsloth `Qwen3.5-4B-GGUF`) carry 3. ollama's *bundled* (older)
-llama.cpp loads them fine — so the fix is either a llama.cpp build that matches
-these GGUFs, or GGUFs re-converted with master's `convert_hf_to_gguf.py`.
+**Flag variants** (88-case eval, qwen3.5-4b, no-think):
 
-Not pursued further tonight: ollama already runs the llama.cpp engine and gave
-the local number (`qwen3.5:4b` 341 ms / 84%); flag-tuning via llama.cpp-direct
-would shave perhaps 10-30% — still short of Cerebras `gpt-oss-120b` (139 ms /
-93%). `bench_llamacpp.sh` is ready to run the moment a compatible model/build
-exists.
+| variant | median | p95 | acc |
+|---|---|---|---|
+| V3 (`-fa` + KV-q8) | 339 ms | 452 ms | 85% |
+| V4 (+ tight ctx/batch) | 339 ms | 451 ms | 85% |
+
+`-fa`, KV-quant, and batch tuning made **no measurable difference** — the model
+is GPU-bound; latency is TTFT (~228 ms) + short generation. V1/V2 failed
+intermittently (the driver doesn't reliably free VRAM between variants — the
+2 s settle is too short).
+
+**MTP** (`--spec-type draft-mtp`): supported, head discovered — but **OOMs on
+the 8 GB RTX 3060 Ti**; MTP needs extra VRAM. Would need a smaller quant to fit.
+
+**Bottom line:** llama.cpp-direct (~339 ms / 85%) ties ollama (~341 ms / 84%) —
+same engine, flags don't move it. Local qwen3.5-4b is a viable offline fallback;
+the gate model remains Cerebras `gpt-oss-120b` (139 ms / 93%).
