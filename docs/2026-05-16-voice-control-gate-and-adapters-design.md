@@ -30,11 +30,11 @@ This design takes it two steps further:
 define success, both drawn from the "interaction model" idea (Thinking
 Machines, 2025): the machine **knowing to wait** when a thought is unfinished,
 and **knowing to stop and accept an interjection** when the user cuts in. The
-gate (§4) is how a turn-based upstream is made to approximate this. Honest
+gate (section 4) is how a turn-based upstream is made to approximate this. Honest
 ceiling: a fast gate makes the *listening* side genuinely indistinguishable
 from a native interaction model; the *responding* side stays turn-based
 (OpenCode cannot perceive while it generates), so the best available there is
-fast turns plus abort-based barge-in (§4.9).
+fast turns plus abort-based barge-in (section 4.9).
 
 This document specifies **sub-project 1** only (see Scope).
 
@@ -49,7 +49,7 @@ That has since been resolved. `ijInjectText()` now focuses the
 verified working — spoken messages reach OpenCode's message store. The
 gate → `adapter.injectText` → `adapter.submit` path in this spec therefore
 builds on a *working* primitive, not an open blocker, and the same
-`execCommand('insertText')` mechanism underlies `pickFromList` (§6.1).
+`execCommand('insertText')` mechanism underlies `pickFromList` (section 6.1).
 
 ---
 
@@ -75,10 +75,10 @@ now.
 - The adapter generator / site-structure analyzer.
 - Any adapter other than OpenCode.
 - Switching to a session *by name* across the network — handled in v1 via DOM
-  scrape (see §6), but anaphora ("open *that* file") is deferred.
+  scrape (see section 6), but anaphora ("open *that* file") is deferred.
 - Setting a *named* model variant — OpenCode exposes only variant *cycling*
-  (see §6); named-variant selection is a stretch goal.
-- LLM-assisted self-healing of broken selectors (noted in §8; not built).
+  (see section 6); named-variant selection is a stretch goal.
+- LLM-assisted self-healing of broken selectors (noted in section 8; not built).
 
 ---
 
@@ -129,7 +129,7 @@ Voice pipeline (per utterance):
 ```
 
 While `Thinking`, a non-backchannel interjection cancels TTS, aborts the
-in-flight response, and re-enters the gate — "barge-in" (§4.9).
+in-flight response, and re-enters the gate — "barge-in" (section 4.9).
 
 ---
 
@@ -145,7 +145,7 @@ handling, and a multi-second call holding the state machine would drop ASR
 finals that arrive mid-call.
 
 So the submit decision moves out of `on_speech_end` into a **dedicated gate
-task** (§4.5):
+task** (section 4.5):
 
 - `on_asr_result` still appends each `Final` to the reconciler, but then sends
   a `SegmentFinalized` signal to the gate task instead of calling
@@ -164,7 +164,7 @@ A single DeepSeek V4 Flash call (no thinking) does all of:
 1. **Conversational completeness** — is the user *done*, or signalling that
    more is coming? This judges the *thought*, not grammar: "I'm going to tell
    you a story" is a complete *sentence* but an incomplete *thought* — a
-   preface. Fragments, trail-offs, and prefaces are all `incomplete` (§4.7).
+   preface. Fragments, trail-offs, and prefaces are all `incomplete` (section 4.7).
 2. **ASR repair** — fix phonetic garble ("Aether Bay Jam" → "Azerbaijan",
    "open auth dot rs" → "auth.rs"). Repair only: never add, drop, or answer.
 3. **Classification** — prompt for the assistant vs. UI command (+ command args).
@@ -183,23 +183,23 @@ The model must return *only* a JSON object:
 ```
 
 - `status: "incomplete"` → return **only** `{"status":"incomplete","hold":<bool>}`
-  — see §4.4. `hold: true` means the user explicitly signalled more is coming
+  — see section 4.4. `hold: true` means the user explicitly signalled more is coming
   (a preface — "I'm going to tell you a story"); `hold: false` means an
   ambiguous fragment or trail-off. The flag drives how patiently the gate task
-  waits (§4.5). A missing `hold` is treated as `false` (fail-safe — never hang).
+  waits (section 4.5). A missing `hold` is treated as `false` (fail-safe — never hang).
 - `status: "prompt"` → include `text` (repaired). No `command`, no `hold`.
 - `status: "command"` → include `text` and `command`. No `hold`.
 
 `command.target` is a search string, or `null` for actions that take no target
 (`new_session`, `cycle_variant`). Every other action (`open_file`,
 `switch_model`, `switch_project`, `switch_session`, `run_command`) requires a
-non-empty `target`. The verdict parser and the recipe dispatcher (§6) validate
+non-empty `target`. The verdict parser and the recipe dispatcher (section 6) validate
 this per-action and reject a `command` whose `target` presence does not match
-its `action` (a rejected command fails open to `Prompt`, §4.8).
+its `action` (a rejected command fails open to `Prompt`, section 4.8).
 
 Rust side:
 `enum Verdict { Incomplete { hold: bool }, Prompt { text: String }, Command { action: CommandAction, target: Option<String>, text: String } }`,
-where `CommandAction` is an enum over the §6.2 actions.
+where `CommandAction` is an enum over the section 6.2 actions.
 
 ### 4.4 Latency — protecting the continuance path
 
@@ -261,7 +261,7 @@ many pauses must not be cut off:
 - **`hold: true`** (a confident preface — "I'm going to tell you a story") →
   the task waits **indefinitely** for more speech. No auto-submit; the
   re-check counter does not advance. The widget shows a calm "listening…"
-  (§10). A long inactivity backstop (`gate_hold_backstop_ms`, default 120000)
+  (section 10). A long inactivity backstop (`gate_hold_backstop_ms`, default 120000)
   exists only so an abandoned session does not sit forever: on expiry with no
   new speech the task quietly returns to `Idle` and **discards** the buffer —
   it never submits a lone preface.
@@ -285,13 +285,13 @@ utterance — which is why only `hold:false` verdicts trip them.
 - `Gating → Gating` — an `Incomplete` verdict; the widget shows "go on…".
 - `Gating → Thinking` — a `Prompt` / `Command` verdict is committed.
 - `Thinking → Gating` — barge-in: the user interjects while the assistant is
-  responding (§4.9).
+  responding (section 4.9).
 - `Thinking → Idle` — response complete, or command executed.
 
 `Gating` is a new state; it replaces the old behaviour where `on_speech_end`
 flipped straight `Thinking → Idle` inline. While `Thinking` the mic stays hot
-and barge-in is handled per §4.9. A widget signal distinguishes `Gating`
-("listening…" / "go on…") from cold `Idle` (see §10).
+and barge-in is handled per section 4.9. A widget signal distinguishes `Gating`
+("listening…" / "go on…") from cold `Idle` (see section 10).
 
 ### 4.7 Gate system prompt (sketch)
 
@@ -330,7 +330,7 @@ Rules:
 <adapter command vocabulary injected here>
 ```
 
-The command vocabulary block is supplied by the active adapter (§7) — the gate
+The command vocabulary block is supplied by the active adapter (section 7) — the gate
 engine is core, but command-aware per site.
 
 ### 4.8 Fail-open
@@ -421,8 +421,8 @@ what the user experiences.
 
 | Situation | What happens |
 |---|---|
-| User keeps talking while a gate call is in flight | `dirty` flag set → verdict discarded → re-gated on the larger buffer (§4.5). |
-| Zen unreachable / gate times out | Fail-open: utterance submitted as a `prompt`, un-repaired (§4.8). |
+| User keeps talking while a gate call is in flight | `dirty` flag set → verdict discarded → re-gated on the larger buffer (section 4.5). |
+| Zen unreachable / gate times out | Fail-open: utterance submitted as a `prompt`, un-repaired (section 4.8). |
 
 ---
 
@@ -434,7 +434,7 @@ New module `src/gate.rs`:
   model, timeout).
 - `async fn classify(&self, text: &str) -> Verdict`.
 - POSTs an OpenAI-format chat completion to the Zen endpoint, parses
-  `choices[0].message.content` as JSON into `Verdict`, applies fail-open (§4.8).
+  `choices[0].message.content` as JSON into `Verdict`, applies fail-open (section 4.8).
 - The system prompt is assembled from a core template + the active adapter's
   command vocabulary.
 
@@ -491,7 +491,7 @@ repairs to `auth.rs` → typed into the file dialog → OpenCode matches it.
   `<a href="/{slug}/session/{id}">` with the title text inside — so by-name
   session switching works via `clickByText`.
 - **Recipe steps poll** (`pollFor`, ~1.5 s max) for their expected element
-  rather than using fixed delays; on timeout the recipe aborts cleanly (§8.3).
+  rather than using fixed delays; on timeout the recipe aborts cleanly (section 8.3).
 
 ---
 
@@ -514,7 +514,7 @@ An adapter is a **declarative bundle** — `adapters/<id>/`:
   }
   ```
 - **`commands.json`** — command actions, declarative recipe steps, and the
-  vocabulary string fed into the gate's system prompt (§4.7). Recipe steps are
+  vocabulary string fed into the gate's system prompt (section 4.7). Recipe steps are
   drawn from the core primitive set (`pick_from_list`, `click_by_text`,
   `dispatch_keybind`, `poll_for`).
 - **`response.json`** — the TTS readback strategy:
@@ -558,7 +558,7 @@ inevitable.
 ### 8.1 One contract, declared once
 
 Today selectors are string literals scattered through the injected JS. They
-move into the adapter's `contract.json` (§7). A drift fix becomes a one-line
+move into the adapter's `contract.json` (section 7). A drift fix becomes a one-line
 edit there. The manifest also gives the checks something to iterate over.
 
 ### 8.2 Two-tier check
@@ -612,11 +612,11 @@ New config (`config.rs` / `Cli` / `.env`):
 | `gate_endpoint` | default | `https://opencode.ai/zen/v1/chat/completions` |
 | `gate_model` | default | `DeepSeek-V4-Flash-EL` — verify exact API id via Zen `GET /v1/models` |
 | `gate_timeout_ms` | default | 4000 |
-| `gate_silence_fallback_ms` | default | 5000 — `hold:false` fallback (§4.5) |
-| `gate_max_rechecks` | default | 3 — `hold:false` re-check cap (§4.5) |
-| `gate_hold_backstop_ms` | default | 120000 — `hold:true` abandoned-session backstop (§4.5) |
-| `gate_debounce_ms` | default | 150 — coalesce rapid finals before a gate call (§4.5) |
-| `recipe_poll_timeout_ms` | default | 1500 — max wait for a recipe step's element (§6.4, §8.3) |
+| `gate_silence_fallback_ms` | default | 5000 — `hold:false` fallback (section 4.5) |
+| `gate_max_rechecks` | default | 3 — `hold:false` re-check cap (section 4.5) |
+| `gate_hold_backstop_ms` | default | 120000 — `hold:true` abandoned-session backstop (section 4.5) |
+| `gate_debounce_ms` | default | 150 — coalesce rapid finals before a gate call (section 4.5) |
+| `recipe_poll_timeout_ms` | default | 1500 — max wait for a recipe step's element (section 6.4, section 8.3) |
 | `--no-gate` | CLI flag | gate disabled (immediate submit) |
 
 The Zen endpoint is OpenAI-compatible; auth is `Authorization: Bearer
@@ -633,14 +633,14 @@ The widget gains, beyond today's mic button / state label / transcript:
   `listening…` (incomplete `hold:true` — a preface; calm and patient) /
   `go on…` (incomplete `hold:false` — a fragment) → `thinking…` (submitted).
 - **Barge-in** — speech during `thinking…` cancels TTS playback and returns
-  the widget to a listening state (§4.9).
+  the widget to a listening state (section 4.9).
 - **Repaired-text flash** — the repaired `text` is shown for ~1 s before
   submit, so a bad repair is at least visible.
 - **Command feedback** — a small text line under the mic, shown on hover:
   `→ opened auth.rs` or `✗ no session matched 'refactor'`. (No toast; no TTS
   for commands — a Cartesia round-trip for "opening file" is not worth the
   latency.)
-- **Health dot** — green/red, driven by the Tier A self-test (§8.2).
+- **Health dot** — green/red, driven by the Tier A self-test (section 8.2).
 
 ---
 
@@ -688,13 +688,13 @@ standalone improvement.
 
 | Failure | Behaviour |
 |---|---|
-| Gate network error / timeout / bad JSON | Fail-open: treat as `Prompt { raw text }`, log (§4.8) |
-| Gate stuck on `incomplete` (`hold:false`) | Silence fallback + re-check cap force a submit (§4.5) |
-| Gate stuck on `incomplete` (`hold:true`) | Waits indefinitely; `gate_hold_backstop_ms` returns to `Idle`, buffer discarded (§4.5) |
-| Recipe step element never appears | `pollFor` times out (~1.5 s), recipe aborts, hover line + server log (§8.3) |
-| Contract selector unresolved | Resolver fails over to fallbacks; if none, named failure (§8.3) |
+| Gate network error / timeout / bad JSON | Fail-open: treat as `Prompt { raw text }`, log (section 4.8) |
+| Gate stuck on `incomplete` (`hold:false`) | Silence fallback + re-check cap force a submit (section 4.5) |
+| Gate stuck on `incomplete` (`hold:true`) | Waits indefinitely; `gate_hold_backstop_ms` returns to `Idle`, buffer discarded (section 4.5) |
+| Recipe step element never appears | `pollFor` times out (~1.5 s), recipe aborts, hover line + server log (section 8.3) |
+| Contract selector unresolved | Resolver fails over to fallbacks; if none, named failure (section 8.3) |
 | Unknown command `action` | Recipe dispatcher rejects it, hover line shows error |
-| `POST /abort` fails during barge-in | TTS already cancelled; stale generation ignored; logged (§4.9) |
+| `POST /abort` fails during barge-in | TTS already cancelled; stale generation ignored; logged (section 4.9) |
 | Zen unreachable at startup | `--no-gate` path; gate disabled, immediate submit |
 | Response strategy emits unexpected shape | Logged loudly; no TTS for that turn (no crash) |
 
@@ -709,11 +709,11 @@ standalone improvement.
   action→steps mapping; contract resolver primary/fallback logic.
 - **Integration:** gate client against a mock OpenAI-compatible endpoint;
   barge-in path against a mock OpenCode `/abort` endpoint.
-- **Prompt regression:** the §4.10 situational examples become the fixture set
+- **Prompt regression:** the section 4.10 situational examples become the fixture set
   — transcripts → expected verdicts (incl. `hold`), run against the real model
   to catch gate-prompt drift.
 - **Tier A:** the in-page self-test is itself the continuous check.
-- **Tier B:** the Playwright `contract-check` suite (§8.2).
+- **Tier B:** the Playwright `contract-check` suite (section 8.2).
 
 ---
 
@@ -725,7 +725,7 @@ standalone improvement.
 - Anaphora resolution ("open *that* file") — needs conversation context;
   deferred.
 - Barge-in stop threshold — the minimum speech duration that triggers a stop
-  vs. lets a short backchannel pass (§4.9) needs tuning against real use;
+  vs. lets a short backchannel pass (section 4.9) needs tuning against real use;
   start conservative.
 - Named model-variant selection — deferred (cycle-only in v1).
 - Sub-project 2 (adapter generator) and sub-project 3 (more adapters) — own
