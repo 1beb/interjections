@@ -1,0 +1,2 @@
+# per-run detail dumps — disposable; results.csv is the kept rollup
+results-*.json
