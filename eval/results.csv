@@ -1,0 +1,4 @@
+date,model,label,cases,runs,n,total_min_ms,total_median_ms,total_p95_ms,total_max_ms,ttft_median_ms,reasoning_median_chars,accuracy,hold_accuracy
+2026-05-18,qwen3.5:4b,local qwen3.5:4b ollama,88,3,264,276,341,576,595,216,0,0.841,0.548
+2026-05-18,qwen3.5:8b,local qwen3.5:8b ollama,88,3,0,,,,,,,0.0,
+2026-05-18,hf.co/unsloth/Qwen3.5-4B-GGUF:Q3_K_M,local qwen3.5:4b Q3_K_M unsloth,88,3,0,,,,,,,0.0,

@@ -37,6 +37,7 @@ CASES = json.load(open(os.path.join(ROOT, "gate_evals.json")))["cases"]
 RUNS_OVERRIDE = None
 ONLY = None
 PACE = 0.0
+LABEL = None
 for _a in sys.argv[1:]:
     if _a.startswith("runs="):
         RUNS_OVERRIDE = int(_a.split("=", 1)[1])
@@ -44,6 +45,8 @@ for _a in sys.argv[1:]:
         ONLY = _a.split("=", 1)[1].lower()
     elif _a.startswith("pace="):
         PACE = float(_a.split("=", 1)[1])
+    elif _a.startswith("label="):
+        LABEL = _a.split("=", 1)[1]  # override label of matched configs (flag variants)
 
 # Each config: a model reachable over an OpenAI-compatible /chat/completions
 # endpoint. `extra` is merged into the request body. Skipped if key_env missing.
@@ -76,6 +79,16 @@ CONFIGS = [
     {"label": "cerebras zai-glm-4.7", "host": "api.cerebras.ai",
      "path": "/v1/chat/completions", "key_env": "CEREBRAS",
      "model": "zai-glm-4.7", "extra": {}, "runs": 3},
+    {"label": "local qwen3.5:4b ollama", "host": "localhost", "port": 11434,
+     "scheme": "http", "key_env": None, "path": "/v1/chat/completions",
+     "model": "qwen3.5:4b", "extra": {"reasoning_effort": "none"}, "runs": 3},
+    {"label": "local qwen3.5:4b Q3_K_M unsloth", "host": "localhost", "port": 11434,
+     "scheme": "http", "key_env": None, "path": "/v1/chat/completions",
+     "model": "hf.co/unsloth/Qwen3.5-4B-GGUF:Q3_K_M",
+     "extra": {"reasoning_effort": "none"}, "runs": 3},
+    {"label": "llamacpp qwen3.5-4b", "host": "localhost", "port": 8091,
+     "scheme": "http", "key_env": None, "path": "/v1/chat/completions",
+     "model": "qwen3.5-4b", "extra": {}, "runs": 3},
     # --- dormant until a key is added (model ids verified at that time) ---
     {"label": "groq llama-3.3-70b", "host": "api.groq.com",
      "path": "/openai/v1/chat/completions", "key_env": "GROQ_API_KEY",
@@ -88,18 +101,27 @@ CONFIGS = [
 _conns = {}
 
 
-def conn_for(host):
-    if host not in _conns:
-        _conns[host] = http.client.HTTPSConnection(host, timeout=90)
-    return _conns[host]
+def _conn_key(cfg):
+    return (cfg["host"], cfg.get("port"), cfg.get("scheme", "https"))
 
 
-def reset_conn(host):
+def conn_for(cfg):
+    key = _conn_key(cfg)
+    if key not in _conns:
+        if cfg.get("scheme", "https") == "http":
+            _conns[key] = http.client.HTTPConnection(cfg["host"], cfg.get("port"), timeout=120)
+        else:
+            _conns[key] = http.client.HTTPSConnection(cfg["host"], cfg.get("port"), timeout=120)
+    return _conns[key]
+
+
+def reset_conn(cfg):
+    key = _conn_key(cfg)
     try:
-        _conns[host].close()
+        _conns[key].close()
     except Exception:
         pass
-    _conns.pop(host, None)
+    _conns.pop(key, None)
 
 
 def _one_call(cfg, utterance):
@@ -111,12 +133,12 @@ def _one_call(cfg, utterance):
         "temperature": 0, "max_tokens": 1024, "stream": True,
     }
     body.update(cfg.get("extra", {}))
-    hdr = {"Authorization": "Bearer " + ENV[cfg["key_env"]],
-           "Content-Type": "application/json"}
-    host = cfg["host"]
+    hdr = {"Content-Type": "application/json"}
+    if cfg.get("key_env") and cfg["key_env"] in ENV:
+        hdr["Authorization"] = "Bearer " + ENV[cfg["key_env"]]
     t0 = time.perf_counter()
     try:
-        c = conn_for(host)
+        c = conn_for(cfg)
         c.request("POST", cfg["path"], json.dumps(body), hdr)
         r = c.getresponse()
         if r.status != 200:
@@ -132,7 +154,7 @@ def _one_call(cfg, utterance):
             buf += chunk
         total = (time.perf_counter() - t0) * 1000.0
     except Exception as e:
-        reset_conn(host)
+        reset_conn(cfg)
         return {"err": f"exception: {e}"}
     content, reasoning = "", ""
     for line in buf.split(b"\n"):
@@ -160,7 +182,7 @@ def call(cfg, utterance):
     for attempt in range(6):
         res = _one_call(cfg, utterance)
         if "HTTP 429" in (res.get("err") or ""):
-            reset_conn(cfg["host"])
+            reset_conn(cfg)
             time.sleep(10 + attempt * 6)
             continue
         return res
@@ -219,12 +241,15 @@ print(f"gate benchmark | {len(CASES)} cases | {datetime.datetime.now():%Y-%m-%d 
 for cfg in CONFIGS:
     if ONLY and ONLY not in (cfg["label"] + " " + cfg["host"]).lower():
         continue
-    if cfg["key_env"] not in ENV:
+    if LABEL:
+        cfg = {**cfg, "label": LABEL}
+    if cfg.get("key_env") and cfg["key_env"] not in ENV:
         print(f"SKIP  {cfg['label']:30s}  (no {cfg['key_env']} in .env)")
         continue
     runs = RUNS_OVERRIDE or cfg["runs"]
     print(f"\n=== {cfg['label']}  (model={cfg['model']}, runs={runs}) ===")
-    call(cfg, "warmup")  # discard - warm the connection
+    for _ in range(3):       # discard - warm connection + model load; cold
+        call(cfg, "warmup")  # first calls never count toward the stats
     totals, ttfts, reason = [], [], []
     correct = hold_hits = hold_total = run_count = 0
     fails = []
