@@ -4,6 +4,7 @@ mod vad;
 mod local_asr;
 mod tts;
 mod cues;
+mod gate;
 mod reconciler;
 mod controller;
 mod web;
