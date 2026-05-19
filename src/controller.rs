@@ -49,6 +49,11 @@ impl Controller {
         }
     }
 
+    /// Shared handle to the reconciler buffer, for the listening task.
+    pub fn reconciler_handle(&self) -> Arc<Mutex<ContextReconciler>> {
+        self.reconciler.clone()
+    }
+
     pub fn broadcast_state(&self, s: State) {
         if let Some(ref ch) = self.web_channels {
             let label = match s {

@@ -45,7 +45,33 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let config = Arc::new(config);
-    let controller = Arc::new(Controller::new((*config).clone(), web_channels.clone(), None));
+
+    // The gate signal channel: on_asr_result -> listening task.
+    let (gate_tx, gate_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+
+    let controller = Arc::new(Controller::new(
+        (*config).clone(),
+        web_channels.clone(),
+        Some(gate_tx),
+    ));
+
+    // Spawn the listening task that owns the gate.
+    {
+        let gate = gate::Gate::new(&config);
+        controller::spawn_listening_task(
+            gate_rx,
+            controller.state.clone(),
+            controller.reconciler_handle(),
+            web_channels.clone(),
+            gate,
+            (*config).clone(),
+        );
+        if config.no_gate {
+            log::info!("Gate disabled (--no-gate): immediate submit");
+        } else {
+            log::info!("Gate: {} @ {}", config.gate_model, config.gate_endpoint);
+        }
+    }
 
     let asr = LocalAsr::new(&config).await?;
     log::info!("Local ASR initialized (Sherpa-onnx)");

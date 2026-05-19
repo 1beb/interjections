@@ -1,8 +1,9 @@
 //! The gate: a fast LLM that decides whether a spoken utterance is a complete
 //! thought, between ASR and submit. See docs/2026-05-16-...-design.md section 4.
 
-// Items here are unused until the listening task is wired in Task 7. Inner
-// attribute (not an outer attr on `mod gate;`, which would not reach these).
+// The command-mode items (CommandAction, Verdict::Command) are not exercised
+// until Plan 2; the gate/listening path itself is fully wired. Keep the allow
+// until command mode lands.
 #![allow(dead_code)]
 
 #[derive(Debug, Clone, PartialEq, Eq)]
