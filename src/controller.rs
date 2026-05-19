@@ -272,6 +272,8 @@ async fn commit(
 ) {
     let text = {
         let mut rec = reconciler.lock().await;
+        // Re-read the freshest buffer: the dirty-check in the re-listen loop
+        // guarantees no un-signalled turns arrived since the classify snapshot.
         let t = rec.reconcile();
         rec.reset();
         t
@@ -387,7 +389,7 @@ mod listening_tests {
         loop {
             match tokio::time::timeout(deadline, rx.recv()).await {
                 Ok(Ok((text, kind))) if kind == "submit" => return Some(text),
-                Ok(Ok(_)) => continue, // a state echo on the same channel? ignore
+                Ok(Ok(_)) => continue, // a non-submit kind (e.g. "partial") — ignore
                 _ => return None,
             }
         }
@@ -425,5 +427,20 @@ mod listening_tests {
         say(&tx, &rec, "open the").await;
         // No more speech: the silence fallback fires and commits what we have.
         assert_eq!(next_submit(&mut sub, 800).await.as_deref(), Some("open the"));
+    }
+
+    #[tokio::test]
+    async fn hold_true_backstop_discards_abandoned_buffer() {
+        let (tx, rec, mut sub) = harness(
+            vec![r#"{"status":"incomplete","hold":true}"#],
+            |c| c.gate_hold_backstop_ms = 150,
+        ).await;
+
+        say(&tx, &rec, "I'm going to tell you a story").await;
+        // hold:true with no follow-up speech: the backstop fires and the
+        // abandoned buffer is discarded — nothing is ever submitted.
+        assert_eq!(next_submit(&mut sub, 500).await, None);
+        // And the reconciler buffer was reset by discard().
+        assert!(rec.lock().await.reconcile().trim().is_empty());
     }
 }
