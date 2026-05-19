@@ -47,6 +47,91 @@ pub enum Verdict {
     Command { action: CommandAction, target: Option<String> },
 }
 
+use std::time::Duration;
+
+/// Plan 1 gate prompt — completeness only. Plan 2 extends this with the
+/// adapter command vocabulary; `parse_verdict` already handles `command`.
+pub const GATE_SYSTEM_PROMPT: &str = "\
+You are a fast gate between speech-to-text and a coding assistant.
+Input: a raw ASR transcript of something a user said aloud.
+Output ONLY a JSON object — no prose, no code fences.
+
+status:
+  \"incomplete\" — the user is NOT done. Judge the *thought*, not grammar:
+                 a fragment (\"open the\"), a trail-off (\"and then, um\"), OR a
+                 preface that promises more (\"I'm going to tell you a story\",
+                 \"okay so here's what I want\", \"let me explain\").
+                 Return ONLY {\"status\":\"incomplete\",\"hold\":<bool>}.
+                   hold=true  — the user explicitly signalled more is coming.
+                   hold=false — an ambiguous fragment or trail-off.
+  \"prompt\"     — the user finished a complete thought. Return {\"status\":\"prompt\"}.
+
+When unsure, choose \"prompt\". A grammatically whole sentence can still be
+incomplete: a preface is a promise of more.";
+
+pub struct Gate {
+    client: reqwest::Client,
+    endpoint: String,
+    model: String,
+    api_key: Option<String>,
+    timeout: Duration,
+}
+
+/// Build the OpenAI-compatible chat-completion request body.
+fn build_request(model: &str, text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": GATE_SYSTEM_PROMPT},
+            {"role": "user", "content": text},
+        ],
+        "temperature": 0,
+        "max_tokens": 80,
+        "response_format": {"type": "json_object"},
+        // No-think switch for the default endpoint (ollama). Other endpoints
+        // use a different switch — out of scope for this plan (spec section 9).
+        "reasoning_effort": "none",
+    })
+}
+
+impl Gate {
+    pub fn new(config: &crate::config::Config) -> Self {
+        Self {
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_millis(config.gate_timeout_ms))
+                .build()
+                .expect("reqwest client"),
+            endpoint: config.gate_endpoint.clone(),
+            model: config.gate_model.clone(),
+            api_key: config.gate_api_key.clone(),
+            timeout: Duration::from_millis(config.gate_timeout_ms),
+        }
+    }
+
+    /// Classify one accumulated utterance. Fail-open: any error returns
+    /// `Verdict::Prompt` (spec section 4.7).
+    pub async fn classify(&self, text: &str) -> Verdict {
+        let body = build_request(&self.model, text);
+        let mut req = self.client.post(&self.endpoint).json(&body);
+        if let Some(key) = &self.api_key {
+            req = req.bearer_auth(key);
+        }
+        let resp = match tokio::time::timeout(self.timeout, req.send()).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => { log::warn!("[gate] request error: {e}"); return Verdict::Prompt; }
+            Err(_) => { log::warn!("[gate] timed out"); return Verdict::Prompt; }
+        };
+        let value: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => { log::warn!("[gate] bad response body: {e}"); return Verdict::Prompt; }
+        };
+        let content = value["choices"][0]["message"]["content"].as_str().unwrap_or("");
+        let verdict = parse_verdict(content);
+        log::info!("[gate] '{}' -> {:?}", text, verdict);
+        verdict
+    }
+}
+
 /// Parse the gate model's reply into a `Verdict`. Fail-safe: any malformed or
 /// unexpected content returns `Verdict::Prompt` (spec section 4.7).
 pub fn parse_verdict(content: &str) -> Verdict {
@@ -146,5 +231,57 @@ mod tests {
         assert_eq!(parse_verdict("not json at all"), Verdict::Prompt);
         assert_eq!(parse_verdict(""), Verdict::Prompt);
         assert_eq!(parse_verdict(r#"{"status":"banana"}"#), Verdict::Prompt);
+    }
+
+    #[test]
+    fn build_request_shape() {
+        let r = build_request("qwen3.5:4b", "open the lexer");
+        assert_eq!(r["model"], "qwen3.5:4b");
+        assert_eq!(r["temperature"], 0);
+        assert_eq!(r["response_format"]["type"], "json_object");
+        assert_eq!(r["reasoning_effort"], "none");
+        assert_eq!(r["messages"][0]["role"], "system");
+        assert_eq!(r["messages"][1]["role"], "user");
+        assert_eq!(r["messages"][1]["content"], "open the lexer");
+    }
+
+    /// Spawn a mock OpenAI-compatible endpoint that returns the given verdict
+    /// JSON as the message content. Returns the chat-completions URL.
+    pub(crate) async fn spawn_mock_gate(content: &'static str) -> String {
+        use axum::{routing::post, Json, Router};
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move || async move {
+                Json(serde_json::json!({
+                    "choices": [{"message": {"content": content}}]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        format!("http://{}/v1/chat/completions", addr)
+    }
+
+    fn test_config(endpoint: String) -> crate::config::Config {
+        let mut c = crate::config::Config::default();
+        c.gate_endpoint = endpoint;
+        c.gate_timeout_ms = 2000;
+        c
+    }
+
+    #[tokio::test]
+    async fn classify_parses_a_verdict() {
+        let url = spawn_mock_gate(r#"{"status":"incomplete","hold":true}"#).await;
+        let gate = Gate::new(&test_config(url));
+        assert_eq!(gate.classify("I'm going to tell you a story").await,
+                   Verdict::Incomplete { hold: true });
+    }
+
+    #[tokio::test]
+    async fn classify_fails_open_when_unreachable() {
+        // Nothing listening on this port -> connection refused -> Prompt.
+        let gate = Gate::new(&test_config("http://127.0.0.1:1/v1/chat/completions".into()));
+        assert_eq!(gate.classify("anything").await, Verdict::Prompt);
     }
 }
