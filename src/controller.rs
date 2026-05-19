@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
 use crate::config::Config;
 use crate::cues::{CueDetector, CueType};
@@ -10,6 +10,7 @@ use crate::local_asr::{AsrResult, AsrSource};
 pub enum State {
     Idle,
     User,
+    Gating,
     Thinking,
 }
 
@@ -20,6 +21,7 @@ pub struct Controller {
     cue_detector: CueDetector,
     partial_transcript: Arc<Mutex<String>>,
     web_channels: Option<WebChannels>,
+    gate_tx: Option<mpsc::UnboundedSender<()>>,
 }
 
 #[derive(Clone)]
@@ -31,7 +33,11 @@ pub struct WebChannels {
 }
 
 impl Controller {
-    pub fn new(config: Config, web_channels: Option<WebChannels>) -> Self {
+    pub fn new(
+        config: Config,
+        web_channels: Option<WebChannels>,
+        gate_tx: Option<mpsc::UnboundedSender<()>>,
+    ) -> Self {
         Self {
             cue_detector: CueDetector::new(config.clone()),
             reconciler: Arc::new(Mutex::new(ContextReconciler::new())),
@@ -39,6 +45,7 @@ impl Controller {
             config,
             partial_transcript: Arc::new(Mutex::new(String::new())),
             web_channels,
+            gate_tx,
         }
     }
 
@@ -47,6 +54,7 @@ impl Controller {
             let label = match s {
                 State::Idle => "idle",
                 State::User => "user",
+                State::Gating => "gating",
                 State::Thinking => "thinking",
             };
             let _ = ch.state_tx.send(label.to_string());
@@ -89,10 +97,16 @@ impl Controller {
                     rec.add_turn(TurnType::User, result.text.clone(), None);
                     log::info!("[ASR] Final: {}", result.text);
                 }
-
-                let current_state = *self.state.lock().await;
-                if current_state != State::Thinking {
-                    self.on_speech_end().await;
+                match &self.gate_tx {
+                    // Gate wired: append-only; the listening task decides.
+                    Some(tx) => { let _ = tx.send(()); }
+                    // Not yet wired (pre-Task-7): old inline-submit behaviour.
+                    None => {
+                        let current_state = *self.state.lock().await;
+                        if current_state != State::Thinking {
+                            self.on_speech_end().await;
+                        }
+                    }
                 }
             }
         }

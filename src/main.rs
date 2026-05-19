@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let config = Arc::new(config);
-    let controller = Arc::new(Controller::new((*config).clone(), web_channels.clone()));
+    let controller = Arc::new(Controller::new((*config).clone(), web_channels.clone(), None));
 
     let asr = LocalAsr::new(&config).await?;
     log::info!("Local ASR initialized (Sherpa-onnx)");
@@ -131,7 +131,7 @@ async fn main() -> anyhow::Result<()> {
                         log::info!("State -> User (VAD start)");
                         controller_task.broadcast_state(State::User);
                     }
-                    State::User | State::Thinking => {}
+                    State::User | State::Gating | State::Thinking => {}
                 }
             }
 
