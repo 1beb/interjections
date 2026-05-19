@@ -23,6 +23,18 @@ pub struct Cli {
 
     #[arg(long, default_value = "http://127.0.0.1:4096")]
     pub opencode_url: String,
+
+    #[arg(long, env = "IJ_GATE_ENDPOINT", default_value = "http://localhost:11434/v1/chat/completions")]
+    pub gate_endpoint: String,
+
+    #[arg(long, env = "IJ_GATE_MODEL", default_value = "qwen3.5:4b")]
+    pub gate_model: String,
+
+    #[arg(long, env = "IJ_GATE_API_KEY")]
+    pub gate_api_key: Option<String>,
+
+    #[arg(long, default_value_t = false)]
+    pub no_gate: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +65,15 @@ pub struct Config {
     pub opencode_server_url: String,
     pub opencode_username: String,
     pub opencode_password: String,
+    pub gate_endpoint: String,
+    pub gate_model: String,
+    pub gate_api_key: Option<String>,
+    pub gate_timeout_ms: u64,
+    pub gate_silence_fallback_ms: u64,
+    pub gate_max_rechecks: u32,
+    pub gate_hold_backstop_ms: u64,
+    pub gate_debounce_ms: u64,
+    pub no_gate: bool,
 }
 
 impl Default for Config {
@@ -96,6 +117,15 @@ impl Default for Config {
             opencode_server_url: "http://127.0.0.1:4096".into(),
             opencode_username: String::new(),
             opencode_password: String::new(),
+            gate_endpoint: "http://localhost:11434/v1/chat/completions".into(),
+            gate_model: "qwen3.5:4b".into(),
+            gate_api_key: None,
+            gate_timeout_ms: 4000,
+            gate_silence_fallback_ms: 5000,
+            gate_max_rechecks: 3,
+            gate_hold_backstop_ms: 120000,
+            gate_debounce_ms: 150,
+            no_gate: false,
         }
     }
 }
@@ -117,6 +147,10 @@ impl Config {
         cfg.cartesia_api_key = cli.cartesia_key.clone()
             .or_else(|| std::env::var("CARTESIA_API_KEY").ok())
             .unwrap_or_default();
+        cfg.gate_endpoint = cli.gate_endpoint.clone();
+        cfg.gate_model = cli.gate_model.clone();
+        cfg.gate_api_key = cli.gate_api_key.clone();
+        cfg.no_gate = cli.no_gate;
         Ok(cfg)
     }
 }
