@@ -5,10 +5,10 @@
 # for what each flag does.
 set -u
 
-SERVER=/home/b/llama.cpp/build/bin/llama-server
+SERVER="$HOME/llama.cpp/build/bin/llama-server"
 # Q4: fresh Unsloth GGUF (May 2026) — loads on master llama.cpp; the older
 # ollama/Unsloth GGUFs fail with the qwen35 rope.dimension_sections skew.
-Q4=/home/b/models/qwen3.5-4b-unsloth-mtp-Q4_K_M.gguf
+Q4="$HOME/models/qwen3.5-4b-unsloth-mtp-Q4_K_M.gguf"
 PORT=8091
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 

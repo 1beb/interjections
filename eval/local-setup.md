@@ -36,7 +36,7 @@ ollama pull qwen3.5:4b                 # Q4_K_M, 4.7B
 Latest engine, full flag control, loads any current GGUF.
 
 ```bash
-cd /home/b
+cd ~
 git clone --depth 1 https://github.com/ggml-org/llama.cpp
 cmake -S llama.cpp -B llama.cpp/build \
       -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release \
@@ -47,13 +47,13 @@ cmake --build llama.cpp/build -j --target llama-server llama-bench
 Server (OpenAI-compatible, `http://localhost:8080/v1/chat/completions`):
 
 ```bash
-./llama.cpp/build/bin/llama-server -m /home/b/models/qwen3.5-4b-Q4_K_M.gguf \
+./llama.cpp/build/bin/llama-server -m ~/models/qwen3.5-4b-Q4_K_M.gguf \
     --host 127.0.0.1 --port 8080 <tuning flags>
 ```
 
 ## Model files
 
-GGUFs copied out of ollama's blob store to `/home/b/models/`:
+GGUFs copied out of ollama's blob store to `~/models/`:
 
 | file | quant | size | source |
 |---|---|---|---|
@@ -106,7 +106,7 @@ benchmarks, kills the server; appends rows to `results.csv`).
 **GGUF compatibility:** older GGUFs (ollama `qwen3.5:4b`, stale Unsloth) fail
 master llama.cpp — `qwen35.rope.dimension_sections expected 4, got 3`. A fresh
 Unsloth GGUF (`unsloth/Qwen3.5-4B-MTP-GGUF`, May 2026) loads cleanly:
-`/home/b/models/qwen3.5-4b-unsloth-mtp-Q4_K_M.gguf`.
+`~/models/qwen3.5-4b-unsloth-mtp-Q4_K_M.gguf`.
 
 **No-think:** the only switch that works for Qwen3.5 here is request-body
 `chat_template_kwargs: {"enable_thinking": false}`. `--reasoning-budget 0`,
