@@ -479,7 +479,9 @@ function ijSetState(s){
   let b=document.getElementById('ij-mic-btn'),st=document.getElementById('ij-status');
   b.className='';
   if(s==='idle'||s==='connected'){b.classList.add('connected');st.textContent='connected'}
-  else if(s==='user'||s==='listening'){b.classList.add('listening');st.textContent='listening'}
+  else if(s==='user'||s==='listening'){b.classList.add('listening');st.textContent='listening...'}
+  else if(s==='checking'){b.classList.add('listening');st.textContent='checking...'}
+  else if(s==='gating'||s==='go-on'){b.classList.add('listening');st.textContent='go on...'}
   else if(s==='model'||s==='speaking'){b.classList.add('speaking');st.textContent='speaking'}
   else if(s==='thinking'){b.classList.add('thinking');st.textContent='thinking...'}
   else{st.textContent=s||'disconnected'}
