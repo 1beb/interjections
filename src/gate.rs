@@ -171,6 +171,51 @@ pub fn parse_verdict(content: &str) -> Verdict {
     }
 }
 
+/// What the listening task should do after a verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoopAction {
+    /// Commit the buffer now (broadcast submit).
+    Commit,
+    /// `hold:true` — wait indefinitely; arm only the abandoned-session backstop.
+    HoldIndefinite,
+    /// `hold:false` — arm the silence fallback timer.
+    ArmFallback,
+}
+
+/// Tracks consecutive `hold:false` verdicts so the task can force a commit
+/// when the gate is repeatedly uncertain (spec section 4.4).
+pub struct GateLoop {
+    recheck_count: u32,
+    max_rechecks: u32,
+}
+
+impl GateLoop {
+    pub fn new(max_rechecks: u32) -> Self {
+        Self { recheck_count: 0, max_rechecks }
+    }
+
+    /// Call once per verdict. Returns the action; mutates the re-check counter.
+    pub fn next_action(&mut self, verdict: &Verdict) -> LoopAction {
+        match verdict {
+            Verdict::Incomplete { hold: true } => LoopAction::HoldIndefinite,
+            Verdict::Incomplete { hold: false } => {
+                self.recheck_count += 1;
+                if self.recheck_count >= self.max_rechecks {
+                    LoopAction::Commit
+                } else {
+                    LoopAction::ArmFallback
+                }
+            }
+            Verdict::Prompt | Verdict::Command { .. } => LoopAction::Commit,
+        }
+    }
+
+    /// Reset after a commit.
+    pub fn reset(&mut self) {
+        self.recheck_count = 0;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,5 +328,46 @@ mod tests {
         // Nothing listening on this port -> connection refused -> Prompt.
         let gate = Gate::new(&test_config("http://127.0.0.1:1/v1/chat/completions".into()));
         assert_eq!(gate.classify("anything").await, Verdict::Prompt);
+    }
+
+    #[test]
+    fn prompt_commits() {
+        let mut gl = GateLoop::new(3);
+        assert_eq!(gl.next_action(&Verdict::Prompt), LoopAction::Commit);
+    }
+
+    #[test]
+    fn command_commits() {
+        let mut gl = GateLoop::new(3);
+        let v = Verdict::Command { action: CommandAction::NewSession, target: None };
+        assert_eq!(gl.next_action(&v), LoopAction::Commit);
+    }
+
+    #[test]
+    fn hold_true_waits_indefinitely_and_does_not_advance_counter() {
+        let mut gl = GateLoop::new(3);
+        for _ in 0..10 {
+            assert_eq!(gl.next_action(&Verdict::Incomplete { hold: true }),
+                       LoopAction::HoldIndefinite);
+        }
+    }
+
+    #[test]
+    fn hold_false_arms_fallback_then_force_commits_at_cap() {
+        let mut gl = GateLoop::new(3);
+        let f = Verdict::Incomplete { hold: false };
+        assert_eq!(gl.next_action(&f), LoopAction::ArmFallback); // 1
+        assert_eq!(gl.next_action(&f), LoopAction::ArmFallback); // 2
+        assert_eq!(gl.next_action(&f), LoopAction::Commit);      // 3 -> cap
+    }
+
+    #[test]
+    fn reset_clears_the_recheck_counter() {
+        let mut gl = GateLoop::new(3);
+        let f = Verdict::Incomplete { hold: false };
+        gl.next_action(&f);
+        gl.next_action(&f);
+        gl.reset();
+        assert_eq!(gl.next_action(&f), LoopAction::ArmFallback); // counter back to 1
     }
 }
