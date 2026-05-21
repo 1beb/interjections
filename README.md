@@ -42,6 +42,20 @@ The default is `pocket`. A fresh checkout will fail fast at startup until the mo
 
 ## Setup
 
+### Quick start (recommended)
+
+```bash
+./scripts/up.sh
+```
+
+An interactive wizard: it asks which gate and TTS engine you want, prompts for
+any missing API keys (saving them to `.env`), does the one-time setup for what
+you chose (ASR model, TLS certs, Pocket TTS provisioning), builds a release
+binary, and launches `opencode web` + interjections. Re-running goes straight to
+launch; `./scripts/up.sh --reconfigure` re-asks the questions.
+
+The manual steps below are the equivalent, if you'd rather set things up by hand.
+
 ### 1. System requirements
 
 - **Rust 1.75+** (`rustup update stable`)
@@ -250,6 +264,7 @@ src/
 └── web.rs         # TLS reverse proxy, WebSocket handler, SSE listener + TTS relay, voice widget
 
 scripts/
+├── up.sh                 # Setup wizard + launcher (recommended entry point)
 └── fetch-pocket-tts.sh   # One-time Pocket TTS model + voice provisioning
 ```
 
