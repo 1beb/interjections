@@ -298,11 +298,12 @@ async fn listen_for_response(
                         log::info!("Response complete ({} events, {} chars), starting TTS", event_count, response_text.len());
                         let tts = crate::tts::CartesiaTts::new(config.clone());
                         let tts_tx_clone = tts_tx.clone();
-                        let _ = tts.speak(
+                        let _ = crate::tts::Tts::speak(
+                            &tts,
                             &response_text,
                             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                            move |samples| { let _ = tts_tx_clone.send(samples); },
-                            || {},
+                            Box::new(move |samples| { let _ = tts_tx_clone.send(samples); }),
+                            Box::new(|| {}),
                         ).await;
                         return;
                     }

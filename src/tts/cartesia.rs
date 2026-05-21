@@ -1,5 +1,3 @@
-mod pcm;
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use futures_util::{SinkExt, StreamExt};
@@ -16,13 +14,16 @@ impl CartesiaTts {
     pub fn new(config: Config) -> Self {
         Self { config }
     }
+}
 
-    pub async fn speak(
+#[async_trait::async_trait]
+impl crate::tts::Tts for CartesiaTts {
+    async fn speak(
         &self,
         text: &str,
         abort_flag: Arc<AtomicBool>,
-        mut on_audio: impl FnMut(Vec<i16>) + Send + 'static,
-        on_done: impl FnOnce() + Send + 'static,
+        mut on_audio: Box<dyn FnMut(Vec<i16>) + Send>,
+        on_done: Box<dyn FnOnce() + Send>,
     ) -> anyhow::Result<()> {
         let api_key = &self.config.cartesia_api_key;
         let ws_url = format!(

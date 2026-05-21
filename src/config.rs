@@ -74,6 +74,7 @@ pub struct Config {
     pub gate_hold_backstop_ms: u64,
     pub gate_debounce_ms: u64,
     pub no_gate: bool,
+    pub tts_engine: String,
 }
 
 impl Default for Config {
@@ -126,6 +127,7 @@ impl Default for Config {
             gate_hold_backstop_ms: 120000,
             gate_debounce_ms: 150,
             no_gate: false,
+            tts_engine: "cartesia".into(),
         }
     }
 }
