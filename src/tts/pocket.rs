@@ -69,3 +69,37 @@ impl super::Tts for PocketTts {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // Only runs if the voice asset is present (implies the HF cache was populated
+    // by scripts/fetch-pocket-tts.sh). Skipped otherwise — same gating style as
+    // the pocket-tts crate's own integration tests.
+    #[tokio::test]
+    async fn pocket_tts_generates_speech_level_audio() {
+        let voice = "data/models/pocket-tts/voice.wav";
+        if !std::path::Path::new(voice).exists() {
+            eprintln!("skipping: {voice} absent (run scripts/fetch-pocket-tts.sh)");
+            return;
+        }
+        let mut cfg = crate::config::Config::default();
+        cfg.tts_engine = "pocket".into();
+
+        let tts = crate::tts::build(&cfg).expect("build pocket tts");
+        let abort = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let collected = std::sync::Arc::new(std::sync::Mutex::new(Vec::<i16>::new()));
+        let c2 = collected.clone();
+
+        tts.speak(
+            "The quick brown fox jumps over the lazy dog.",
+            abort,
+            Box::new(move |s| c2.lock().unwrap().extend(s)),
+            Box::new(|| {}),
+        ).await.unwrap();
+
+        let audio = collected.lock().unwrap();
+        let peak = audio.iter().map(|s| s.abs() as i32).max().unwrap_or(0);
+        assert!(audio.len() > 24_000, "expected >1s of audio, got {} samples", audio.len());
+        assert!(peak > 3000, "expected speech-level peak, got {peak}");
+    }
+}
