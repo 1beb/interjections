@@ -2,32 +2,31 @@
 
 Voice layer for OpenCode web — speak naturally into your mic, ASR transcribes locally, text is injected into OpenCode's prompt, and the assistant's response is read aloud via TTS.
 
-Interjections runs as a **TLS reverse proxy** in front of `opencode web`, injecting a voice widget into the HTML page. It handles the full voice pipeline: noise suppression, VAD, local ASR (Sherpa-onnx), a gate LLM (qwen3.5:4b via Ollama) that normalises and filters utterances before submission, and streaming TTS.
+Interjections runs as a **TLS reverse proxy** in front of `opencode web`, injecting a voice widget into the HTML page. It handles the full voice pipeline: noise suppression, VAD, local ASR (Sherpa-onnx), a gate LLM (Cerebras gpt-oss-120b by default, or local qwen3.5:4b via Ollama) that normalises and filters utterances before submission, and streaming TTS.
 
 ## Architecture
 
-```
-Browser ──► https://<host>:8765
-                 │ (TLS reverse proxy + widget injection)
-                 ▼
-           http://127.0.0.1:4096 (OpenCode server)
+```mermaid
+flowchart TD
+    Browser["Browser — https://&lt;host&gt;:8765"]
+    Proxy["interjections<br/>TLS reverse proxy + widget injection"]
+    OpenCode["OpenCode server<br/>http://127.0.0.1:4096"]
+    Browser --> Proxy --> OpenCode
 
-Voice widget (injected into OpenCode HTML):
-  Mic ──► WebSocket ──► nnnoiseless ──► Energy VAD ──► Sherpa-onnx ASR
-                                                            │
-                                                   Controller (state machine)
-                                                   Idle ─► User ─► Thinking
-                                                            │
-                                                   Gate LLM (qwen3.5:4b)
-                                                   normalise / filter / hold
-                                                            │
-                                                   Context Reconciler
-                                                            │
-                                                   WebSocket broadcast
-                                                   ├─ "submit" → DOM injection → OpenCode prompt
-                                                   └─ "partial" → widget transcript display
+    subgraph Widget["Voice widget (injected into OpenCode HTML)"]
+        direction TB
+        Mic["Mic"] --> WS["WebSocket"] --> NS["nnnoiseless"] --> VAD["Energy VAD"] --> ASR["Sherpa-onnx ASR"]
+        ASR --> Ctrl["Controller state machine<br/>Idle → User → Thinking"]
+        Ctrl --> Gate["Gate LLM<br/>Cerebras gpt-oss-120b (default)<br/>or local qwen3.5:4b<br/>normalise / filter / hold"]
+        Gate --> Recon["Context Reconciler"]
+        Recon --> Bcast{"WebSocket broadcast"}
+        Bcast -->|submit| Inject["DOM injection → OpenCode prompt"]
+        Bcast -->|partial| Disp["widget transcript display"]
+    end
 
-OpenCode SSE /global/event ──► response_text ──► TTS engine ──► audio to widget
+    Proxy -.injects.-> Widget
+    OpenCode -->|"SSE /global/event → response_text"| TTS["TTS engine<br/>Pocket TTS (default) / Cartesia"]
+    TTS -->|audio| Widget
 ```
 
 ### TTS engines
@@ -64,14 +63,27 @@ mv sherpa-onnx-streaming-zipformer-en-2023-06-26 data/models/sherpa-zipformer-en
 rm sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2
 ```
 
-### 3. Gate LLM (Ollama)
+### 3. Gate LLM
 
-The gate LLM normalises and filters voice utterances before they reach OpenCode. It fails open — if the model or Ollama is unreachable, the raw transcript is submitted.
+The gate LLM normalises and filters voice utterances before they reach OpenCode. It fails open — if the gate is unreachable, the raw transcript is submitted (you lose the "wait, more is coming" hold behavior, not the whole loop).
+
+**Default: Cerebras `gpt-oss-120b`** (fastest + best hold accuracy in the eval; see ADR-0005). Set the key — `IJ_GATE_API_KEY`, or it falls back to `CEREBRAS`:
+
+```bash
+export CEREBRAS="csk-..."   # https://cloud.cerebras.ai
+```
+
+**Local fallback: `qwen3.5:4b` via Ollama** (fully offline, no key):
 
 ```bash
 # Install Ollama: https://ollama.com/download
 ollama pull qwen3.5:4b
-ollama serve   # must be running on localhost:11434 when interjections starts
+ollama serve   # must be running on localhost:11434
+# then point the gate at it:
+interjections --web \
+  --gate-endpoint http://localhost:11434/v1/chat/completions \
+  --gate-model qwen3.5:4b \
+  --gate-reasoning-effort none
 ```
 
 ### 4. Local TTS — Pocket TTS (default engine)
@@ -139,9 +151,8 @@ mkdir -p data/models
 wget -qO- https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2 \
   | tar -xjf - && mv sherpa-onnx-streaming-zipformer-en-2023-06-26 data/models/sherpa-zipformer-en
 
-# 2. Gate LLM
-ollama pull qwen3.5:4b
-ollama serve &
+# 2. Gate LLM (default: Cerebras — just set the key)
+export CEREBRAS="csk-..."   # or, for the local fallback: ollama pull qwen3.5:4b && ollama serve &
 
 # 3. Pocket TTS weights (accept HF license first, then create a token)
 HF_TOKEN=hf_… ./scripts/fetch-pocket-tts.sh
@@ -174,9 +185,10 @@ cargo run -- --web
 --cartesia-key <KEY>         Cartesia API key — only used with --tts-engine cartesia (CARTESIA_API_KEY)
 --sherpa-model-dir <DIR>     Sherpa-onnx model directory (default: data/models/sherpa-zipformer-en)
 --opencode-url <URL>         OpenCode server URL (default: http://127.0.0.1:4096)
---gate-endpoint <URL>        Gate LLM endpoint (default: http://localhost:11434/v1/chat/completions) (IJ_GATE_ENDPOINT)
---gate-model <MODEL>         Gate LLM model name (default: qwen3.5:4b) (IJ_GATE_MODEL)
---gate-api-key <KEY>         Gate LLM API key — optional, for non-Ollama endpoints (IJ_GATE_API_KEY)
+--gate-endpoint <URL>        Gate LLM endpoint (default: https://api.cerebras.ai/v1/chat/completions) (IJ_GATE_ENDPOINT)
+--gate-model <MODEL>         Gate LLM model (default: gpt-oss-120b) (IJ_GATE_MODEL)
+--gate-api-key <KEY>         Gate LLM API key — falls back to CEREBRAS env (IJ_GATE_API_KEY)
+--gate-reasoning-effort <E>  No-think switch: low (gpt-oss) | none (ollama qwen) (IJ_GATE_REASONING_EFFORT)
 --no-gate                    Bypass the gate and submit raw ASR transcripts
 ```
 
@@ -189,10 +201,13 @@ IJ_TTS_ENGINE=pocket           TTS engine: pocket (default) or cartesia
 # Cartesia — only required when IJ_TTS_ENGINE=cartesia
 CARTESIA_API_KEY=sk_car_...
 
-# Gate LLM (defaults work for a local Ollama install)
-IJ_GATE_ENDPOINT=http://localhost:11434/v1/chat/completions
-IJ_GATE_MODEL=qwen3.5:4b
-IJ_GATE_API_KEY=               (optional — for non-Ollama OpenAI-compatible endpoints)
+# Gate LLM (defaults to Cerebras gpt-oss-120b)
+IJ_GATE_ENDPOINT=https://api.cerebras.ai/v1/chat/completions
+IJ_GATE_MODEL=gpt-oss-120b
+IJ_GATE_REASONING_EFFORT=low   (low for gpt-oss; none for ollama qwen)
+IJ_GATE_API_KEY=               (gate key; falls back to CEREBRAS when unset)
+CEREBRAS=csk-...               (used as the gate key if IJ_GATE_API_KEY is unset)
+# Local fallback: --gate-endpoint http://localhost:11434/v1/chat/completions --gate-model qwen3.5:4b --gate-reasoning-effort none
 
 # OpenCode
 OPENCODE_USERNAME=opencode
