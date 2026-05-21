@@ -3,8 +3,10 @@ use std::sync::atomic::AtomicBool;
 
 mod cartesia;
 mod pcm;
+mod pocket;
 
 pub use cartesia::CartesiaTts;
+pub use pocket::PocketTts;
 
 /// A text-to-speech engine that streams i16 PCM chunks with abort support.
 #[async_trait::async_trait]
@@ -22,8 +24,7 @@ pub trait Tts: Send + Sync {
 pub fn build(config: &crate::config::Config) -> anyhow::Result<Arc<dyn Tts>> {
     match config.tts_engine.as_str() {
         "cartesia" => Ok(Arc::new(CartesiaTts::new(config.clone()))),
-        // PocketTts is wired in Task 4; until then, selecting it errors clearly.
-        "pocket" => anyhow::bail!("pocket TTS not yet wired (implemented in a later task)"),
+        "pocket" => Ok(Arc::new(PocketTts::load(config)?)),
         other => anyhow::bail!("unknown tts_engine '{other}' (expected 'pocket' or 'cartesia')"),
     }
 }
