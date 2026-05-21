@@ -24,14 +24,19 @@ pub struct Cli {
     #[arg(long, default_value = "http://127.0.0.1:4096")]
     pub opencode_url: String,
 
-    #[arg(long, env = "IJ_GATE_ENDPOINT", default_value = "http://localhost:11434/v1/chat/completions")]
+    #[arg(long, env = "IJ_GATE_ENDPOINT", default_value = "https://api.cerebras.ai/v1/chat/completions")]
     pub gate_endpoint: String,
 
-    #[arg(long, env = "IJ_GATE_MODEL", default_value = "qwen3.5:4b")]
+    #[arg(long, env = "IJ_GATE_MODEL", default_value = "gpt-oss-120b")]
     pub gate_model: String,
 
     #[arg(long, env = "IJ_GATE_API_KEY")]
     pub gate_api_key: Option<String>,
+
+    /// Per-endpoint no-think / low-reasoning switch: "low" for gpt-oss (Cerebras),
+    /// "none" for ollama qwen. Sent as the `reasoning_effort` request field.
+    #[arg(long, env = "IJ_GATE_REASONING_EFFORT", default_value = "low")]
+    pub gate_reasoning_effort: String,
 
     #[arg(long, default_value_t = false)]
     pub no_gate: bool,
@@ -71,6 +76,7 @@ pub struct Config {
     pub gate_endpoint: String,
     pub gate_model: String,
     pub gate_api_key: Option<String>,
+    pub gate_reasoning_effort: String,
     pub gate_timeout_ms: u64,
     pub gate_silence_fallback_ms: u64,
     pub gate_max_rechecks: u32,
@@ -126,9 +132,10 @@ impl Default for Config {
             opencode_server_url: "http://127.0.0.1:4096".into(),
             opencode_username: String::new(),
             opencode_password: String::new(),
-            gate_endpoint: "http://localhost:11434/v1/chat/completions".into(),
-            gate_model: "qwen3.5:4b".into(),
+            gate_endpoint: "https://api.cerebras.ai/v1/chat/completions".into(),
+            gate_model: "gpt-oss-120b".into(),
             gate_api_key: None,
+            gate_reasoning_effort: "low".into(),
             gate_timeout_ms: 4000,
             gate_silence_fallback_ms: 5000,
             gate_max_rechecks: 3,
@@ -164,7 +171,12 @@ impl Config {
             .unwrap_or_default();
         cfg.gate_endpoint = cli.gate_endpoint.clone();
         cfg.gate_model = cli.gate_model.clone();
-        cfg.gate_api_key = cli.gate_api_key.clone();
+        // Gate key: explicit flag/IJ_GATE_API_KEY wins, else fall back to CEREBRAS
+        // (the default gate endpoint is Cerebras).
+        cfg.gate_api_key = cli.gate_api_key.clone()
+            .or_else(|| std::env::var("CEREBRAS").ok())
+            .filter(|s| !s.is_empty());
+        cfg.gate_reasoning_effort = cli.gate_reasoning_effort.clone();
         cfg.no_gate = cli.no_gate;
         cfg.tts_engine = cli.tts_engine.clone();
         Ok(cfg)

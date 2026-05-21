@@ -75,11 +75,18 @@ pub struct Gate {
     endpoint: String,
     model: String,
     api_key: Option<String>,
+    reasoning_effort: String,
     timeout: Duration,
 }
 
 /// Build the OpenAI-compatible chat-completion request body.
-fn build_request(model: &str, text: &str) -> serde_json::Value {
+///
+/// `reasoning_effort` is the per-endpoint no-think switch: "low" for gpt-oss
+/// (Cerebras, the default), "none" for ollama qwen. `max_tokens` must leave room
+/// for any reasoning preamble plus the JSON verdict — gpt-oss at "low" emits a
+/// short reasoning trace (~150 chars) before the JSON, so a tight 80-token cap
+/// would truncate it.
+fn build_request(model: &str, text: &str, reasoning_effort: &str) -> serde_json::Value {
     serde_json::json!({
         "model": model,
         "messages": [
@@ -87,11 +94,9 @@ fn build_request(model: &str, text: &str) -> serde_json::Value {
             {"role": "user", "content": text},
         ],
         "temperature": 0,
-        "max_tokens": 80,
+        "max_tokens": 512,
         "response_format": {"type": "json_object"},
-        // No-think switch for the default endpoint (ollama). Other endpoints
-        // use a different switch — out of scope for this plan (spec section 9).
-        "reasoning_effort": "none",
+        "reasoning_effort": reasoning_effort,
     })
 }
 
@@ -105,6 +110,7 @@ impl Gate {
             endpoint: config.gate_endpoint.clone(),
             model: config.gate_model.clone(),
             api_key: config.gate_api_key.clone(),
+            reasoning_effort: config.gate_reasoning_effort.clone(),
             timeout: Duration::from_millis(config.gate_timeout_ms),
         }
     }
@@ -112,7 +118,7 @@ impl Gate {
     /// Classify one accumulated utterance. Fail-open: any error returns
     /// `Verdict::Prompt` (spec section 4.7).
     pub async fn classify(&self, text: &str) -> Verdict {
-        let body = build_request(&self.model, text);
+        let body = build_request(&self.model, text, &self.reasoning_effort);
         let mut req = self.client.post(&self.endpoint).json(&body);
         if let Some(key) = &self.api_key {
             req = req.bearer_auth(key);
@@ -281,14 +287,21 @@ mod tests {
 
     #[test]
     fn build_request_shape() {
-        let r = build_request("qwen3.5:4b", "open the lexer");
-        assert_eq!(r["model"], "qwen3.5:4b");
+        let r = build_request("gpt-oss-120b", "open the lexer", "low");
+        assert_eq!(r["model"], "gpt-oss-120b");
         assert_eq!(r["temperature"], 0);
         assert_eq!(r["response_format"]["type"], "json_object");
-        assert_eq!(r["reasoning_effort"], "none");
+        assert_eq!(r["reasoning_effort"], "low");
         assert_eq!(r["messages"][0]["role"], "system");
         assert_eq!(r["messages"][1]["role"], "user");
         assert_eq!(r["messages"][1]["content"], "open the lexer");
+    }
+
+    #[test]
+    fn build_request_respects_reasoning_effort() {
+        // ollama qwen path still works with the "none" switch.
+        let r = build_request("qwen3.5:4b", "hi", "none");
+        assert_eq!(r["reasoning_effort"], "none");
     }
 
     /// Spawn a mock OpenAI-compatible endpoint that returns the given verdict
