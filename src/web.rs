@@ -32,6 +32,7 @@ pub struct SharedState {
     pub config: Config,
     pub opencode_client: Client,
     pub auth_header: String,
+    pub tts: std::sync::Arc<dyn crate::tts::Tts>,
 }
 
 pub async fn start(
@@ -44,6 +45,8 @@ pub async fn start(
 
     let opencode_client = Client::builder().build()?;
 
+    let tts = crate::tts::build(&config)?;
+
     let shared = SharedState {
         audio_tx: channels.audio_tx,
         state_tx: channels.state_tx,
@@ -53,6 +56,7 @@ pub async fn start(
         config: config.clone(),
         opencode_client,
         auth_header,
+        tts,
     };
 
     let app = Router::new()
@@ -209,6 +213,7 @@ async fn listen_for_response(
     session_id: &str,
     auth_header: &str,
     tts_tx: tokio::sync::broadcast::Sender<Vec<i16>>,
+    tts: std::sync::Arc<dyn crate::tts::Tts>,
     config: &crate::Config,
 ) {
     use futures_util::StreamExt;
@@ -296,12 +301,11 @@ async fn listen_for_response(
                     }
                     if role == "assistant" && finish.is_some() && !response_text.trim().is_empty() {
                         log::info!("Response complete ({} events, {} chars), starting TTS", event_count, response_text.len());
-                        let tts = crate::tts::CartesiaTts::new(config.clone());
                         let tts_tx_clone = tts_tx.clone();
-                        let _ = crate::tts::Tts::speak(
-                            &tts,
+                        let abort = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                        let _ = tts.speak(
                             &response_text,
-                            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                            abort,
                             Box::new(move |samples| { let _ = tts_tx_clone.send(samples); }),
                             Box::new(|| {}),
                         ).await;
@@ -339,6 +343,7 @@ async fn ws_handler(
     req: axum::extract::Request,
 ) -> impl axum::response::IntoResponse {
     let config_clone = state.config.clone();
+    let tts_clone = state.tts.clone();
     let session = req.uri().query()
         .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("session=")))
         .unwrap_or("")
@@ -350,7 +355,7 @@ async fn ws_handler(
         let state_rx = state.state_tx.subscribe();
         let transcript_rx = state.transcript_tx.subscribe();
         let log_rx = state.log_tx.subscribe();
-        handle_ws(socket, audio_rx, audio_tx, state_rx, transcript_rx, log_rx, state.asr_audio_tx, config_clone, session)
+        handle_ws(socket, audio_rx, audio_tx, state_rx, transcript_rx, log_rx, state.asr_audio_tx, config_clone, tts_clone, session)
     })
 }
 
@@ -363,6 +368,7 @@ async fn handle_ws(
     mut log_rx: broadcast::Receiver<String>,
     asr_audio_tx: tokio::sync::mpsc::Sender<crate::audio::AudioMessage>,
     config: crate::Config,
+    tts: std::sync::Arc<dyn crate::tts::Tts>,
     active_session: String,
 ) {
     log::info!("Voice widget connected");
@@ -432,8 +438,9 @@ async fn handle_ws(
                             let tts_tx = audio_tx.clone();
                             let cfg = config.clone();
                             let auth = auth_header(&cfg);
+                            let tts_engine = tts.clone();
                             tokio::spawn(async move {
-                                listen_for_response(&session, &auth, tts_tx, &cfg).await;
+                                listen_for_response(&session, &auth, tts_tx, tts_engine, &cfg).await;
                             });
                         }
                     }
