@@ -1,3 +1,5 @@
+mod pcm;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use futures_util::{SinkExt, StreamExt};
