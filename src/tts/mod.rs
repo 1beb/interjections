@@ -1,0 +1,55 @@
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
+mod cartesia;
+mod pcm;
+mod pocket;
+
+pub use cartesia::CartesiaTts;
+pub use pocket::PocketTts;
+
+/// A text-to-speech engine that streams i16 PCM chunks with abort support.
+#[async_trait::async_trait]
+pub trait Tts: Send + Sync {
+    async fn speak(
+        &self,
+        text: &str,
+        abort_flag: Arc<AtomicBool>,
+        on_audio: Box<dyn FnMut(Vec<i16>) + Send>,
+        on_done: Box<dyn FnOnce() + Send>,
+    ) -> anyhow::Result<()>;
+}
+
+/// Build the configured TTS engine once, at startup.
+pub fn build(config: &crate::config::Config) -> anyhow::Result<Arc<dyn Tts>> {
+    match config.tts_engine.as_str() {
+        "cartesia" => Ok(Arc::new(CartesiaTts::new(config.clone()))),
+        "pocket" => Ok(Arc::new(PocketTts::load(config)?)),
+        other => anyhow::bail!("unknown tts_engine '{other}' (expected 'pocket' or 'cartesia')"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_cartesia_ok() {
+        let mut c = crate::config::Config::default();
+        c.tts_engine = "cartesia".into();
+        assert!(build(&c).is_ok());
+    }
+
+    #[test]
+    fn build_unknown_errors() {
+        let mut c = crate::config::Config::default();
+        c.tts_engine = "bogus".into();
+        match build(&c) {
+            Ok(_) => panic!("expected error for unknown tts_engine"),
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(msg.contains("unknown tts_engine"));
+            }
+        }
+    }
+}

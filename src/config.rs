@@ -35,6 +35,9 @@ pub struct Cli {
 
     #[arg(long, default_value_t = false)]
     pub no_gate: bool,
+
+    #[arg(long, env = "IJ_TTS_ENGINE", default_value = "pocket")]
+    pub tts_engine: String,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +77,12 @@ pub struct Config {
     pub gate_hold_backstop_ms: u64,
     pub gate_debounce_ms: u64,
     pub no_gate: bool,
+    pub tts_engine: String,
+    pub pocket_variant: String,
+    pub pocket_voice: String,
+    pub pocket_eos_threshold: f32,
+    pub pocket_temperature: f32,
+    pub pocket_gain: f32,
 }
 
 impl Default for Config {
@@ -126,6 +135,12 @@ impl Default for Config {
             gate_hold_backstop_ms: 120000,
             gate_debounce_ms: 150,
             no_gate: false,
+            tts_engine: "pocket".into(),
+            pocket_variant: "b6369a24".into(),
+            pocket_voice: "data/models/pocket-tts/voice.wav".into(),
+            pocket_eos_threshold: -7.0,
+            pocket_temperature: 0.7,
+            pocket_gain: 42.0,
         }
     }
 }
@@ -151,6 +166,7 @@ impl Config {
         cfg.gate_model = cli.gate_model.clone();
         cfg.gate_api_key = cli.gate_api_key.clone();
         cfg.no_gate = cli.no_gate;
+        cfg.tts_engine = cli.tts_engine.clone();
         Ok(cfg)
     }
 }

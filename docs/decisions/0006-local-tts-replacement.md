@@ -1,9 +1,16 @@
 # ADR-0006: Local TTS replacement
 
-- **Status:** Accepted (primary verified by spike) — implementation pending
+- **Status:** Accepted — implemented (engine swap)
 - **Date:** 2026-05-20 (revised after fresh May 2026 market survey + spike)
 - **Supersedes:** ADR-0004 (Cartesia transitional) once implemented
 - **Related:** ADR-0004
+
+**Implementation note (2026-05-20):** Pocket TTS is now implemented behind a
+`Tts` trait (`src/tts.rs`); the active engine is selected by the `tts_engine`
+config field (env `IJ_TTS_ENGINE` / `--tts-engine`), defaulting to `pocket`,
+with `cartesia` as the config-selectable fallback. The model is loaded once at
+startup and verified by a gated smoke test that produced speech-level audio on
+the dev machine.
 
 ## Spike verdict (2026-05-20)
 
