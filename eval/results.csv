@@ -18,3 +18,4 @@ date,model,label,cases,runs,n,total_min_ms,total_median_ms,total_p95_ms,total_ma
 2026-05-18,granite3.3:8b,local granite3.3:8b ollama,88,3,264,131,397,795,972,58,0,0.625,0.782
 2026-05-18,deepseek-v4-flash,deepseek-v4-flash no-think,88,3,264,821,1315,2022,2938,496,0,0.852,0.677
 2026-05-18,gpt-oss-120b,cerebras gpt-oss-120b,88,3,264,102,144,323,4411,107,144,0.83,0.88
+2026-05-21,gpt-oss-120b,cerebras gpt-oss-120b,88,1,88,93,130,266,3014,93,146,0.841,0.885

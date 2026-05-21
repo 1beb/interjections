@@ -31,6 +31,6 @@ Format: lightweight Nygard-style, one decision per file. See
 | [0002](0002-reverse-proxy-transport.md) | Reverse-proxy transport in front of opencode web | Accepted |
 | [0003](0003-sherpa-onnx-zipformer-asr.md) | Sherpa-onnx streaming Zipformer for ASR | Under review |
 | [0004](0004-cartesia-tts-transitional.md) | Cartesia Sonic-3 TTS (transitional) | Transitional |
-| [0005](0005-qwen3.5-4b-gate-llm.md) | qwen3.5:4b via Ollama for the gate | Accepted |
+| [0005](0005-qwen3.5-4b-gate-llm.md) | Gate model — Cerebras gpt-oss-120b default, qwen3.5:4b local fallback | Accepted (revised) |
 | [0006](0006-local-tts-replacement.md) | Local TTS replacement (Pocket TTS) | Accepted (implemented) |
 | [0007](0007-asr-replacement.md) | ASR replacement / upgrade | Open |
