@@ -7,7 +7,6 @@ Interjections runs as a **TLS reverse proxy** in front of `opencode web`, inject
 ## Architecture
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'primaryColor':'#ffffff','primaryTextColor':'#000000','primaryBorderColor':'#000000','lineColor':'#000000','clusterBkg':'#ffffff','clusterBorder':'#000000'}}}%%
 flowchart TD
     Browser["Browser — https://&lt;host&gt;:8765"]
     Proxy["interjections<br/>TLS reverse proxy + widget injection"]
@@ -20,7 +19,7 @@ flowchart TD
         ASR --> Ctrl["Controller state machine<br/>Idle → User → Thinking"]
         Ctrl --> Gate["Gate LLM<br/>Cerebras gpt-oss-120b (default)<br/>or local qwen3.5:4b<br/>normalise / filter / hold"]
         Gate --> Recon["Context Reconciler"]
-        Recon --> Bcast["WebSocket broadcast"]
+        Recon --> Bcast{"WebSocket broadcast"}
         Bcast -->|submit| Inject["DOM injection → OpenCode prompt"]
         Bcast -->|partial| Disp["widget transcript display"]
     end
